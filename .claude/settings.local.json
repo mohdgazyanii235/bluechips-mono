@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:www.reviews.io)",
+      "WebFetch(domain:kommon-s.com)",
+      "WebFetch(domain:techsavycrew.com)",
+      "WebFetch(domain:foxygirls.co.uk)",
+      "Bash(docker compose *)",
+      "Bash(curl -s \"http://localhost:8000/api/escorts/natasha\")",
+      "Bash(curl -s \"http://localhost:8000/api/escorts?page=1&per_page=3\")",
+      "Bash(curl -s \"http://localhost:3000/escorts\")",
+      "Bash(curl -s \"http://localhost:3000/api/escorts?page=1&per_page=3\")",
+      "Bash(curl -s -v \"http://localhost:3000/api/escorts?page=1&per_page=3\")",
+      "Bash(curl -s -I -X OPTIONS \"http://localhost:8000/api/escorts/natasha\" -H \"Origin: http://localhost:3000\" -H \"Access-Control-Request-Method: GET\" -H \"Access-Control-Request-Headers: Content-Type\")",
+      "Bash(curl -s \"http://localhost:8000/api/boroughs\")",
+      "Bash(curl -s \"http://localhost:3000/src/components/age-gate/AgeGate.tsx\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"http://localhost:3000/api/escorts?page=1&per_page=3\")",
+      "Bash(grep -E \"\\\\.\\(tsx|ts|py\\)$\")",
+      "Bash(xargs grep *)",
+      "Bash(curl -s -X POST http://localhost:8000/api/admin/login -H 'Content-Type: application/json' -d '{\"email\":\"mohdgazyanii235@gmail.com\",\"password\":\"changeme123\"}')",
+      "Bash(python -m json.tool)",
+      "Bash(curl -s http://localhost:3000/admin/login)",
+      "Bash(curl -s http://localhost:8000/api/admin/stats -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0NzZhNmIxNy1kYjJhLTQ2YjYtODM2NC1jNDQxOThhNGExOGUiLCJleHAiOjE3Nzc2Njg4NTksImlhdCI6MTc3NzY2NTI1OX0.759d1jOrrskYYcXnQDSlfrXjqvRRX4703p7E3imM_8s')",
+      "Bash(grep -E \"\\\\.\\(ts|tsx|js|jsx\\)$\")",
+      "Bash(grep -E \"\\\\.\\(tsx|ts|jsx\\)$\")",
+      "Bash(npx tsc *)",
+      "Bash(gh pr *)",
+      "Bash(curl -s http://localhost:8000/api/health)",
+      "Bash(curl -s \"http://localhost:8000/api/escorts?per_page=1\")",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('profile_type:', d['items'][0].get\\('profile_type', 'MISSING'\\)\\)\")",
+      "Bash(curl -s \"http://localhost:8000/api/escorts/test123\")",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('whatsapp:', d.get\\('whatsapp_number', 'MISSING'\\), '| phone:', d.get\\('phone_number', 'MISSING'\\), '| profile_type:', d.get\\('profile_type', 'MISSING'\\)\\)\")"
+    ]
+  }
+}

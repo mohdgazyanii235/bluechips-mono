@@ -1,0 +1,80 @@
+# ─── Node / Frontend ────────────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/build/
+frontend/.vite/
+*.tsbuildinfo
+
+# ─── Python / Backend ───────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.env/
+backend/.env.prod.example
+*.egg-info/
+dist/
+build/
+*.so
+.Python
+
+# ─── Environment files ──────────────────────────────────────────────────────
+.env
+.env.prod
+.env.production
+.env.staging
+.env.local
+.env.*.local
+backend/.env
+backend/.env.prod
+backend/.env.production
+
+# ─── Uploads & media ────────────────────────────────────────────────────────
+backend/uploads/
+
+# ─── Logs ───────────────────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── Test & coverage ────────────────────────────────────────────────────────
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+coverage/
+*.lcov
+
+# ─── IDE & editors ──────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# ─── OS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ─── Docker ─────────────────────────────────────────────────────────────────
+.docker/
+
+# ─── Alembic compiled ────────────────────────────────────────────────────────
+backend/alembic/versions/__pycache__/
+
+# ─── Misc ────────────────────────────────────────────────────────────────────
+*.bak
+*.tmp
+*.orig
+.cache/
