@@ -1,6 +1,10 @@
 import axios from 'axios'
 
-const adminClient = axios.create({ baseURL: '/api' })
+const BASE_URL = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : '/api'
+
+const adminClient = axios.create({ baseURL: BASE_URL })
 
 adminClient.interceptors.request.use((config) => {
   const token = localStorage.getItem('bl_admin_token')
