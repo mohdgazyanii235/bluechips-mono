@@ -11,8 +11,31 @@ from app.database import engine, Base, AsyncSessionLocal
 from app.routers import auth, escorts, boroughs, upload, verification, admin, payments, discounts, pricing
 
 
+_DEFAULT_PRICES = {
+    "essential_monthly_pence": 1199,
+    "essential_annual_pence": 11990,
+    "premium_monthly_pence": 1899,
+    "premium_annual_pence": 18990,
+    "elite_monthly_pence": 2399,
+    "elite_annual_pence": 23990,
+    "blue_tick_setup_pence": 1000,
+    "blue_tick_monthly_pence": 399,
+}
+
+_STRIPE_ID_MAP = {
+    "stripe_essential_monthly_id": "STRIPE_ESSENTIAL_PRICE_ID",
+    "stripe_essential_annual_id": "STRIPE_ESSENTIAL_ANNUAL_PRICE_ID",
+    "stripe_premium_monthly_id": "STRIPE_PREMIUM_PRICE_ID",
+    "stripe_premium_annual_id": "STRIPE_PREMIUM_ANNUAL_PRICE_ID",
+    "stripe_elite_monthly_id": "STRIPE_ELITE_PRICE_ID",
+    "stripe_elite_annual_id": "STRIPE_ELITE_ANNUAL_PRICE_ID",
+    "stripe_blue_tick_setup_id": "STRIPE_BLUE_TICK_SETUP_PRICE_ID",
+    "stripe_blue_tick_monthly_id": "STRIPE_BLUE_TICK_MONTHLY_PRICE_ID",
+}
+
+
 async def _ensure_platform_config():
-    """Seed the singleton platform_config row with Stripe price IDs from config if not present."""
+    """Seed the singleton platform_config row with defaults and Stripe IDs from config."""
     from sqlalchemy import select
     from app.models.platform_config import PlatformConfig
 
@@ -23,23 +46,17 @@ async def _ensure_platform_config():
             cfg = PlatformConfig(id=1)
             db.add(cfg)
 
-        # Always sync Stripe IDs from config if the DB field is still blank
-        if not cfg.stripe_essential_monthly_id and settings.STRIPE_ESSENTIAL_PRICE_ID:
-            cfg.stripe_essential_monthly_id = settings.STRIPE_ESSENTIAL_PRICE_ID
-        if not cfg.stripe_essential_annual_id and settings.STRIPE_ESSENTIAL_ANNUAL_PRICE_ID:
-            cfg.stripe_essential_annual_id = settings.STRIPE_ESSENTIAL_ANNUAL_PRICE_ID
-        if not cfg.stripe_premium_monthly_id and settings.STRIPE_PREMIUM_PRICE_ID:
-            cfg.stripe_premium_monthly_id = settings.STRIPE_PREMIUM_PRICE_ID
-        if not cfg.stripe_premium_annual_id and settings.STRIPE_PREMIUM_ANNUAL_PRICE_ID:
-            cfg.stripe_premium_annual_id = settings.STRIPE_PREMIUM_ANNUAL_PRICE_ID
-        if not cfg.stripe_elite_monthly_id and settings.STRIPE_ELITE_PRICE_ID:
-            cfg.stripe_elite_monthly_id = settings.STRIPE_ELITE_PRICE_ID
-        if not cfg.stripe_elite_annual_id and settings.STRIPE_ELITE_ANNUAL_PRICE_ID:
-            cfg.stripe_elite_annual_id = settings.STRIPE_ELITE_ANNUAL_PRICE_ID
-        if not cfg.stripe_blue_tick_setup_id and settings.STRIPE_BLUE_TICK_SETUP_PRICE_ID:
-            cfg.stripe_blue_tick_setup_id = settings.STRIPE_BLUE_TICK_SETUP_PRICE_ID
-        if not cfg.stripe_blue_tick_monthly_id and settings.STRIPE_BLUE_TICK_MONTHLY_PRICE_ID:
-            cfg.stripe_blue_tick_monthly_id = settings.STRIPE_BLUE_TICK_MONTHLY_PRICE_ID
+        # Seed default prices if they are 0 or None (handles fresh DB or bad migration)
+        for field, default_value in _DEFAULT_PRICES.items():
+            if not getattr(cfg, field, None):
+                setattr(cfg, field, default_value)
+
+        # Sync Stripe price IDs from .env if the DB field is still blank
+        for db_field, config_field in _STRIPE_ID_MAP.items():
+            if not getattr(cfg, db_field, None):
+                env_value = getattr(settings, config_field, "")
+                if env_value:
+                    setattr(cfg, db_field, env_value)
 
         await db.commit()
 
