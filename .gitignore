@@ -12,9 +12,6 @@ __pycache__/
 *.pyd
 .venv/
 venv/
-env/
-.env/
-backend/.env.prod.example
 *.egg-info/
 dist/
 build/
@@ -22,15 +19,8 @@ build/
 .Python
 
 # ─── Environment files ──────────────────────────────────────────────────────
-.env
-.env.prod
-.env.production
-.env.staging
-.env.local
-.env.*.local
 backend/.env
 backend/.env.prod
-backend/.env.production
 
 # ─── Uploads & media ────────────────────────────────────────────────────────
 backend/uploads/
