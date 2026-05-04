@@ -120,7 +120,7 @@ export function AdminPricingPage() {
           <div>
             <h1 className="font-serif text-2xl text-ivory-100">Pricing</h1>
             <p className="text-stone-500 text-sm mt-1">
-              Changes create new Stripe prices automatically. Existing subscribers keep their current price until they resubscribe.
+              Click any price field, type a new amount, then click <strong className="text-ivory-300">Save Changes</strong>.
             </p>
             {pricing?.updated_at && (
               <p className="text-stone-600 text-xs mt-1">
@@ -186,7 +186,7 @@ export function AdminPricingPage() {
                     </div>
 
                     <div className="shrink-0 flex items-center gap-2">
-                      <div className={`flex items-center rounded-lg border overflow-hidden transition-colors ${changed ? 'border-gold-400/60' : 'border-surface-border'}`}>
+                      <div className={`flex items-center rounded-lg border overflow-hidden transition-colors hover:border-gold-400/40 ${changed ? 'border-gold-400/60 bg-gold-400/5' : 'border-surface-border'}`}>
                         <span className="pl-3 pr-1 text-stone-500 text-sm">
                           <PoundSterling className="w-3.5 h-3.5" />
                         </span>
@@ -196,7 +196,7 @@ export function AdminPricingPage() {
                           step="0.01"
                           value={inputVal}
                           onChange={e => handleChange(field.key, e.target.value)}
-                          className="bg-surface text-ivory-100 text-sm px-2 py-2.5 w-24 focus:outline-none"
+                          className="bg-transparent text-ivory-100 text-sm px-2 py-2.5 w-24 focus:outline-none cursor-text"
                         />
                       </div>
                       {changed && (
