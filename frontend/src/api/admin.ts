@@ -124,4 +124,42 @@ export const adminApi = {
     const { data } = await adminClient.patch(`/admin/discounts/${id}/deactivate`)
     return data
   },
+
+  getPricing: async () => {
+    const { data } = await adminClient.get('/admin/pricing')
+    return data as {
+      essential_monthly_pence: number
+      essential_annual_pence: number
+      premium_monthly_pence: number
+      premium_annual_pence: number
+      elite_monthly_pence: number
+      elite_annual_pence: number
+      blue_tick_setup_pence: number
+      blue_tick_monthly_pence: number
+      stripe_essential_monthly_id: string
+      stripe_essential_annual_id: string
+      stripe_premium_monthly_id: string
+      stripe_premium_annual_id: string
+      stripe_elite_monthly_id: string
+      stripe_elite_annual_id: string
+      stripe_blue_tick_setup_id: string
+      stripe_blue_tick_monthly_id: string
+      updated_at: string | null
+      updated_by: string | null
+    }
+  },
+
+  updatePricing: async (payload: {
+    essential_monthly_pence?: number
+    essential_annual_pence?: number
+    premium_monthly_pence?: number
+    premium_annual_pence?: number
+    elite_monthly_pence?: number
+    elite_annual_pence?: number
+    blue_tick_setup_pence?: number
+    blue_tick_monthly_pence?: number
+  }) => {
+    const { data } = await adminClient.put('/admin/pricing', payload)
+    return data as { message: string }
+  },
 }

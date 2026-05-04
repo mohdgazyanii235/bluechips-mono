@@ -8,7 +8,40 @@ from pathlib import Path
 
 from app.config import settings
 from app.database import engine, Base, AsyncSessionLocal
-from app.routers import auth, escorts, boroughs, upload, verification, admin, payments, discounts
+from app.routers import auth, escorts, boroughs, upload, verification, admin, payments, discounts, pricing
+
+
+async def _ensure_platform_config():
+    """Seed the singleton platform_config row with Stripe price IDs from config if not present."""
+    from sqlalchemy import select
+    from app.models.platform_config import PlatformConfig
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(PlatformConfig).where(PlatformConfig.id == 1))
+        cfg = result.scalar_one_or_none()
+        if not cfg:
+            cfg = PlatformConfig(id=1)
+            db.add(cfg)
+
+        # Always sync Stripe IDs from config if the DB field is still blank
+        if not cfg.stripe_essential_monthly_id and settings.STRIPE_ESSENTIAL_PRICE_ID:
+            cfg.stripe_essential_monthly_id = settings.STRIPE_ESSENTIAL_PRICE_ID
+        if not cfg.stripe_essential_annual_id and settings.STRIPE_ESSENTIAL_ANNUAL_PRICE_ID:
+            cfg.stripe_essential_annual_id = settings.STRIPE_ESSENTIAL_ANNUAL_PRICE_ID
+        if not cfg.stripe_premium_monthly_id and settings.STRIPE_PREMIUM_PRICE_ID:
+            cfg.stripe_premium_monthly_id = settings.STRIPE_PREMIUM_PRICE_ID
+        if not cfg.stripe_premium_annual_id and settings.STRIPE_PREMIUM_ANNUAL_PRICE_ID:
+            cfg.stripe_premium_annual_id = settings.STRIPE_PREMIUM_ANNUAL_PRICE_ID
+        if not cfg.stripe_elite_monthly_id and settings.STRIPE_ELITE_PRICE_ID:
+            cfg.stripe_elite_monthly_id = settings.STRIPE_ELITE_PRICE_ID
+        if not cfg.stripe_elite_annual_id and settings.STRIPE_ELITE_ANNUAL_PRICE_ID:
+            cfg.stripe_elite_annual_id = settings.STRIPE_ELITE_ANNUAL_PRICE_ID
+        if not cfg.stripe_blue_tick_setup_id and settings.STRIPE_BLUE_TICK_SETUP_PRICE_ID:
+            cfg.stripe_blue_tick_setup_id = settings.STRIPE_BLUE_TICK_SETUP_PRICE_ID
+        if not cfg.stripe_blue_tick_monthly_id and settings.STRIPE_BLUE_TICK_MONTHLY_PRICE_ID:
+            cfg.stripe_blue_tick_monthly_id = settings.STRIPE_BLUE_TICK_MONTHLY_PRICE_ID
+
+        await db.commit()
 
 
 async def _ensure_admin_exists():
@@ -50,6 +83,7 @@ async def lifespan(app: FastAPI):
         Path(settings.LOCAL_UPLOADS_DIR).joinpath(subdir).mkdir(parents=True, exist_ok=True)
 
     await _ensure_admin_exists()
+    await _ensure_platform_config()
     yield
 
 
@@ -101,6 +135,7 @@ app.include_router(verification.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(payments.router, prefix="/api")
 app.include_router(discounts.router, prefix="/api")
+app.include_router(pricing.router, prefix="/api")
 
 
 @app.get("/api/health")

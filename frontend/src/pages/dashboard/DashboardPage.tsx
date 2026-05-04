@@ -174,7 +174,7 @@ export function DashboardPage() {
                 <div className="flex items-center gap-4 pt-1">
                   <div className="flex items-center gap-1.5 text-xs text-stone-400">
                     <Zap className="w-3.5 h-3.5 text-gold-400" />
-                    Essential from <span className="text-gold-400 font-bold">£11.99/mo</span>
+                    Paid plans from <span className="text-gold-400 font-bold">£11.99/mo</span>
                   </div>
                   <div className="flex items-center gap-1.5 text-xs text-stone-400">
                     <Crown className="w-3.5 h-3.5 text-gold-400" />

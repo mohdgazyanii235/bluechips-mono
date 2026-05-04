@@ -10,6 +10,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.discount import DiscountCode
 from app.models.escort import Escort
+from app.models.platform_config import PlatformConfig
 from app.models.subscription import Subscription
 from app.models.verification import Verification
 from app.routers.deps import get_current_verified_escort
@@ -18,16 +19,27 @@ from app.services.email_service import send_verification_submitted_to_admin
 
 router = APIRouter(tags=["Payments"])
 
-TIER_PRICE_MAP = {
-    "essential": {"monthly": "STRIPE_ESSENTIAL_PRICE_ID", "annual": "STRIPE_ESSENTIAL_ANNUAL_PRICE_ID"},
-    "premium":   {"monthly": "STRIPE_PREMIUM_PRICE_ID",   "annual": "STRIPE_PREMIUM_ANNUAL_PRICE_ID"},
-    "elite":     {"monthly": "STRIPE_ELITE_PRICE_ID",     "annual": "STRIPE_ELITE_ANNUAL_PRICE_ID"},
-}
-
 TIER_ORDER = {"free": 0, "essential": 1, "premium": 2, "elite": 3}
 
-_TIER_ANNUAL_PRICE_PENCE = {"essential": 24990, "premium": 49990, "elite": 89990}
-_ANNUAL_AMOUNTS = {24990, 49990, 89990}
+# Maps tier+billing → PlatformConfig field names for Stripe price ID and annual pence
+_TIER_STRIPE_FIELD = {
+    "essential": {"monthly": "stripe_essential_monthly_id", "annual": "stripe_essential_annual_id"},
+    "premium":   {"monthly": "stripe_premium_monthly_id",   "annual": "stripe_premium_annual_id"},
+    "elite":     {"monthly": "stripe_elite_monthly_id",     "annual": "stripe_elite_annual_id"},
+}
+_TIER_ANNUAL_PENCE_FIELD = {
+    "essential": "essential_annual_pence",
+    "premium": "premium_annual_pence",
+    "elite": "elite_annual_pence",
+}
+
+
+async def _get_platform_config(db: AsyncSession) -> PlatformConfig:
+    result = await db.execute(select(PlatformConfig).where(PlatformConfig.id == 1))
+    cfg = result.scalar_one_or_none()
+    if not cfg:
+        raise HTTPException(status_code=503, detail="Platform pricing not configured")
+    return cfg
 
 
 def _stripe_client() -> stripe.StripeClient:
@@ -41,6 +53,7 @@ async def _build_stripe_discount(
     db: AsyncSession,
     body: "CheckoutRequest",
     escort: Escort,
+    cfg: PlatformConfig,
 ) -> Optional[str]:
     """Validate discount/referral code, apply redemption, return a Stripe coupon ID (or None)."""
     percent_off = None
@@ -92,7 +105,8 @@ async def _build_stripe_discount(
             "name": f"{label}: {percent_off}% off × {duration_months}mo",
         })
     else:
-        annual_price = _TIER_ANNUAL_PRICE_PENCE.get(body.tier, 0)
+        annual_field = _TIER_ANNUAL_PENCE_FIELD.get(body.tier, "")
+        annual_price = getattr(cfg, annual_field, 0) if annual_field else 0
         amount_off = max(1, int((annual_price / 12) * (percent_off / 100) * duration_months))
         coupon = client.coupons.create(params={
             "amount_off": amount_off,
@@ -121,13 +135,14 @@ async def create_checkout_session(
     escort: Escort = Depends(get_current_verified_escort),
     db: AsyncSession = Depends(get_db),
 ):
-    if body.tier not in TIER_PRICE_MAP:
+    if body.tier not in _TIER_STRIPE_FIELD:
         raise HTTPException(status_code=400, detail="Invalid tier. Choose: essential, premium, or elite")
     if body.billing not in ("monthly", "annual"):
         raise HTTPException(status_code=400, detail="billing must be 'monthly' or 'annual'")
 
-    price_key = TIER_PRICE_MAP[body.tier][body.billing]
-    price_id = getattr(settings, price_key, "")
+    cfg = await _get_platform_config(db)
+    stripe_field = _TIER_STRIPE_FIELD[body.tier][body.billing]
+    price_id = getattr(cfg, stripe_field, "")
     if not price_id:
         if body.billing == "annual":
             raise HTTPException(status_code=503, detail="Annual billing is not yet available. Please select monthly billing.")
@@ -160,7 +175,7 @@ async def create_checkout_session(
         escort.stripe_customer_id = customer_id
         await db.flush()
 
-    coupon_id = await _build_stripe_discount(client, db, body, escort)
+    coupon_id = await _build_stripe_discount(client, db, body, escort, cfg)
 
     session_params: dict = {
         "customer": customer_id,
@@ -270,7 +285,8 @@ async def create_blue_tick_checkout(
     if escort.blue_tick_stripe_subscription_id:
         raise HTTPException(status_code=400, detail="You already have an active Blue Tick subscription")
 
-    if not settings.STRIPE_BLUE_TICK_MONTHLY_PRICE_ID or not settings.STRIPE_BLUE_TICK_SETUP_PRICE_ID:
+    cfg = await _get_platform_config(db)
+    if not cfg.stripe_blue_tick_monthly_id or not cfg.stripe_blue_tick_setup_id:
         raise HTTPException(status_code=503, detail="Blue Tick pricing not configured")
 
     client = _stripe_client()
@@ -290,8 +306,8 @@ async def create_blue_tick_checkout(
         "customer": customer_id,
         "mode": "subscription",
         "line_items": [
-            {"price": settings.STRIPE_BLUE_TICK_MONTHLY_PRICE_ID, "quantity": 1},
-            {"price": settings.STRIPE_BLUE_TICK_SETUP_PRICE_ID, "quantity": 1},
+            {"price": cfg.stripe_blue_tick_monthly_id, "quantity": 1},
+            {"price": cfg.stripe_blue_tick_setup_id, "quantity": 1},
         ],
         "subscription_data": {
             "metadata": {"escort_id": str(escort.id), "tier": "blue_tick"},
@@ -314,15 +330,16 @@ async def upgrade_tier(
     """Switch an existing subscription to a different tier (or billing period) without creating
     a new subscription. The existing Stripe subscription is modified in-place so the escort is
     never charged for two plans simultaneously. Stripe prorates the difference immediately."""
-    if body.tier not in TIER_PRICE_MAP:
+    if body.tier not in _TIER_STRIPE_FIELD:
         raise HTTPException(status_code=400, detail="Invalid tier")
     if body.billing not in ("monthly", "annual"):
         raise HTTPException(status_code=400, detail="billing must be 'monthly' or 'annual'")
     if not escort.stripe_subscription_id:
         raise HTTPException(status_code=400, detail="No active subscription found. Use the checkout flow to subscribe.")
 
-    price_key = TIER_PRICE_MAP[body.tier][body.billing]
-    price_id = getattr(settings, price_key, "")
+    cfg = await _get_platform_config(db)
+    stripe_field = _TIER_STRIPE_FIELD[body.tier][body.billing]
+    price_id = getattr(cfg, stripe_field, "")
     if not price_id:
         if body.billing == "annual":
             raise HTTPException(status_code=503, detail="Annual billing is not yet available. Please select monthly billing.")

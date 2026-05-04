@@ -14,6 +14,7 @@ import stripe
 from app.database import get_db
 from app.models.discount import DiscountCode
 from app.models.escort import Escort
+from app.models.platform_config import PlatformConfig
 from app.models.verification import Verification
 from app.models.admin import Admin
 from app.models.subscription import Subscription
@@ -479,3 +480,106 @@ async def deactivate_discount_code(
     dc.is_active = False
     await db.flush()
     return MessageResponse(message=f"Discount code '{dc.code}' deactivated")
+
+
+# ─── Pricing Management ───────────────────────────────────────────────────────
+
+_PRICING_FIELDS = [
+    ("essential_monthly_pence", "stripe_essential_monthly_id", "month", False),
+    ("essential_annual_pence",  "stripe_essential_annual_id",  "year",  False),
+    ("premium_monthly_pence",   "stripe_premium_monthly_id",   "month", False),
+    ("premium_annual_pence",    "stripe_premium_annual_id",    "year",  False),
+    ("elite_monthly_pence",     "stripe_elite_monthly_id",     "month", False),
+    ("elite_annual_pence",      "stripe_elite_annual_id",      "year",  False),
+    ("blue_tick_setup_pence",   "stripe_blue_tick_setup_id",   None,    True),
+    ("blue_tick_monthly_pence", "stripe_blue_tick_monthly_id", "month", False),
+]
+
+
+class UpdatePricingRequest(BaseModel):
+    essential_monthly_pence: Optional[int] = None
+    essential_annual_pence: Optional[int] = None
+    premium_monthly_pence: Optional[int] = None
+    premium_annual_pence: Optional[int] = None
+    elite_monthly_pence: Optional[int] = None
+    elite_annual_pence: Optional[int] = None
+    blue_tick_setup_pence: Optional[int] = None
+    blue_tick_monthly_pence: Optional[int] = None
+
+
+@router.get("/pricing")
+async def get_pricing_config(admin: Admin = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(PlatformConfig).where(PlatformConfig.id == 1))
+    cfg = result.scalar_one_or_none()
+    if not cfg:
+        raise HTTPException(status_code=503, detail="Platform config not initialised — restart the server")
+
+    price_fields = [f for f, _, _, _ in _PRICING_FIELDS]
+    stripe_fields = [s for _, s, _, _ in _PRICING_FIELDS]
+    return {
+        **{f: getattr(cfg, f) for f in price_fields},
+        **{s: getattr(cfg, s) for s in stripe_fields},
+        "updated_at": cfg.updated_at.isoformat() if cfg.updated_at else None,
+        "updated_by": cfg.updated_by,
+    }
+
+
+@router.put("/pricing", response_model=MessageResponse)
+async def update_pricing(
+    data: UpdatePricingRequest,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(PlatformConfig).where(PlatformConfig.id == 1))
+    cfg = result.scalar_one_or_none()
+    if not cfg:
+        raise HTTPException(status_code=503, detail="Platform config not initialised")
+
+    stripe_client = None
+    if settings.STRIPE_SECRET_KEY:
+        stripe_client = stripe.StripeClient(settings.STRIPE_SECRET_KEY)
+
+    for price_field, stripe_id_field, interval, is_one_time in _PRICING_FIELDS:
+        new_amount = getattr(data, price_field)
+        if new_amount is None:
+            continue
+        if new_amount < 1:
+            raise HTTPException(status_code=400, detail=f"{price_field} must be at least 1 pence")
+
+        current_amount = getattr(cfg, price_field)
+        if new_amount == current_amount:
+            continue
+
+        # Create new Stripe price when amount changes and Stripe is configured
+        if stripe_client:
+            current_price_id = getattr(cfg, stripe_id_field, "")
+            if current_price_id:
+                try:
+                    old_price = stripe_client.prices.retrieve(current_price_id)
+                    product_id = old_price["product"]
+
+                    price_params: dict = {
+                        "unit_amount": new_amount,
+                        "currency": "gbp",
+                        "product": product_id,
+                    }
+                    if not is_one_time and interval:
+                        price_params["recurring"] = {"interval": interval}
+
+                    new_price = stripe_client.prices.create(params=price_params)
+                    # Archive the old price so it no longer appears as active
+                    stripe_client.prices.update(current_price_id, params={"active": False})
+                    setattr(cfg, stripe_id_field, new_price.id)
+                except Exception as e:
+                    print(f"[STRIPE] Failed to create new price for {price_field}: {e}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Stripe price creation failed for {price_field}. No changes saved.",
+                    )
+
+        setattr(cfg, price_field, new_amount)
+
+    cfg.updated_at = datetime.utcnow()
+    cfg.updated_by = admin.email
+    await db.flush()
+    return MessageResponse(message="Pricing updated successfully")

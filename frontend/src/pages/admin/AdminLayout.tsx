@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { ClipboardList, Users, LogOut, LayoutDashboard, Tag } from 'lucide-react'
+import { ClipboardList, Users, LogOut, LayoutDashboard, Tag, PoundSterling } from 'lucide-react'
 import { useAdminStore } from '@/store/adminStore'
 import { cn } from '@/utils/cn'
 
@@ -8,6 +8,7 @@ const NAV = [
   { label: 'Verifications', href: '/admin/verifications', icon: ClipboardList },
   { label: 'Escorts', href: '/admin/escorts', icon: Users },
   { label: 'Discounts', href: '/admin/discounts', icon: Tag },
+  { label: 'Pricing', href: '/admin/pricing', icon: PoundSterling },
 ]
 
 export function AdminLayout({ children }: { children: React.ReactNode }) {

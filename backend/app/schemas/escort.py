@@ -180,6 +180,7 @@ class EscortDashboardOut(BaseModel):
     profile_type: str = "individual"
     whatsapp_number: Optional[str] = None
     phone_number: Optional[str] = None
+    referral_code: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

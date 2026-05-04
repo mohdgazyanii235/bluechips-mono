@@ -3,7 +3,7 @@ import { Helmet } from 'react-helmet-async'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { ChevronLeft, Check, Zap, Star, Crown, CheckCircle, X, Sparkles, Clock, Tag } from 'lucide-react'
 import { motion } from 'framer-motion'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { DashboardLayout } from '@/components/layout/Layout'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
@@ -21,13 +21,24 @@ interface AppliedCode {
   discount_amount_pence: number
 }
 
-const PLANS = [
+interface Pricing {
+  essential_monthly_pence: number
+  essential_annual_pence: number
+  premium_monthly_pence: number
+  premium_annual_pence: number
+  elite_monthly_pence: number
+  elite_annual_pence: number
+  blue_tick_setup_pence: number
+  blue_tick_monthly_pence: number
+}
+
+const PLAN_META = [
   {
     id: 'essential',
     name: 'Essential',
-    monthlyPence: 1199,
-    annualPence: 11990,   // £119.90/yr — 2 months free (10× monthly)
     icon: Zap,
+    monthlyKey: 'essential_monthly_pence' as keyof Pricing,
+    annualKey: 'essential_annual_pence' as keyof Pricing,
     features: [
       'Up to 8 photos',
       'Identity verification badge',
@@ -39,10 +50,10 @@ const PLANS = [
   {
     id: 'premium',
     name: 'Premium',
-    monthlyPence: 1899,
-    annualPence: 18990,   // £189.90/yr — 2 months free (10× monthly)
     icon: Star,
     popular: true,
+    monthlyKey: 'premium_monthly_pence' as keyof Pricing,
+    annualKey: 'premium_annual_pence' as keyof Pricing,
     features: [
       'Up to 50 photos',
       'Featured search placement',
@@ -54,9 +65,9 @@ const PLANS = [
   {
     id: 'elite',
     name: 'Elite',
-    monthlyPence: 2399,
-    annualPence: 23990,   // £239.90/yr — 2 months free (10× monthly)
     icon: Crown,
+    monthlyKey: 'elite_monthly_pence' as keyof Pricing,
+    annualKey: 'elite_annual_pence' as keyof Pricing,
     features: [
       'Homepage rotation',
       'Top of all search results',
@@ -67,6 +78,17 @@ const PLANS = [
   },
 ]
 
+const DEFAULT_PRICING: Pricing = {
+  essential_monthly_pence: 1199,
+  essential_annual_pence: 11990,
+  premium_monthly_pence: 1899,
+  premium_annual_pence: 18990,
+  elite_monthly_pence: 2399,
+  elite_annual_pence: 23990,
+  blue_tick_setup_pence: 1000,
+  blue_tick_monthly_pence: 399,
+}
+
 function fmt(pence: number) {
   return `£${(pence / 100).toFixed(2)}`
 }
@@ -75,6 +97,11 @@ type Billing = 'monthly' | 'annual'
 
 export function SubscriptionPage() {
   const { data: escort, isLoading } = useMyProfile()
+  const { data: pricing = DEFAULT_PRICING } = useQuery<Pricing>({
+    queryKey: ['pricing'],
+    queryFn: () => apiClient.get('/pricing').then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+  })
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [loadingTier, setLoadingTier] = useState<string | null>(null)
@@ -249,15 +276,17 @@ export function SubscriptionPage() {
 
           {/* Plans grid */}
           <div className="grid sm:grid-cols-3 gap-5">
-            {PLANS.map((plan, i) => {
+            {PLAN_META.map((plan, i) => {
               const isActive = plan.id === currentTier
               const Icon = plan.icon
               const isLoading = loadingTier === plan.id
-              const price = billing === 'annual' ? plan.annualPence : plan.monthlyPence
+              const monthlyPence = pricing[plan.monthlyKey]
+              const annualPence = pricing[plan.annualKey]
+              const price = billing === 'annual' ? annualPence : monthlyPence
               const perMonth = billing === 'annual'
-                ? Math.round(plan.annualPence / 12)
-                : plan.monthlyPence
-              const saving = plan.monthlyPence * 12 - plan.annualPence
+                ? Math.round(annualPence / 12)
+                : monthlyPence
+              const saving = monthlyPence * 12 - annualPence
 
               return (
                 <motion.div
@@ -478,8 +507,8 @@ export function SubscriptionPage() {
                   <p className="text-stone-500 text-sm mt-1">Prove your photos are genuinely yours. Hugely increases client trust and bookings.</p>
                 </div>
                 <div className="text-right shrink-0">
-                  <p className="text-gold-400 font-semibold">£10 setup</p>
-                  <p className="text-stone-500 text-xs">then £3.99/month</p>
+                  <p className="text-gold-400 font-semibold">{fmt(pricing.blue_tick_setup_pence)} setup</p>
+                  <p className="text-stone-500 text-xs">then {fmt(pricing.blue_tick_monthly_pence)}/month</p>
                 </div>
               </div>
               <ul className="space-y-2">
@@ -507,7 +536,7 @@ export function SubscriptionPage() {
                 </div>
               ) : (
                 <Link to="/dashboard/verify">
-                  <Button variant="gold" fullWidth>Apply for Blue Tick — £10 + £3.99/mo</Button>
+                  <Button variant="gold" fullWidth>Apply for Blue Tick — {fmt(pricing.blue_tick_setup_pence)} + {fmt(pricing.blue_tick_monthly_pence)}/mo</Button>
                 </Link>
               )}
             </div>
