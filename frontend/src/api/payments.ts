@@ -2,8 +2,15 @@ import apiClient from './client'
 
 export const paymentsApi = {
   /** New subscription — opens Stripe Checkout page */
-  createCheckout: async (tier: string, billing: 'monthly' | 'annual' = 'monthly'): Promise<{ url: string }> => {
-    const { data } = await apiClient.post('/payments/checkout', { tier, billing })
+  createCheckout: async (
+    tier: string,
+    billing: 'monthly' | 'annual' = 'monthly',
+    promo?: { type: 'discount' | 'referral'; code: string },
+  ): Promise<{ url: string }> => {
+    const payload: Record<string, string> = { tier, billing }
+    if (promo?.type === 'discount') payload.discount_code = promo.code
+    if (promo?.type === 'referral') payload.referral_code = promo.code
+    const { data } = await apiClient.post('/payments/checkout', payload)
     return data
   },
 

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from app.config import settings
 from app.database import engine, Base, AsyncSessionLocal
-from app.routers import auth, escorts, boroughs, upload, verification, admin, payments
+from app.routers import auth, escorts, boroughs, upload, verification, admin, payments, discounts
 
 
 async def _ensure_admin_exists():
@@ -100,6 +100,7 @@ app.include_router(upload.router, prefix="/api")
 app.include_router(verification.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(payments.router, prefix="/api")
+app.include_router(discounts.router, prefix="/api")
 
 
 @app.get("/api/health")

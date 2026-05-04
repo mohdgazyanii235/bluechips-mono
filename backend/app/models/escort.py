@@ -110,6 +110,11 @@ class Escort(Base):
     blue_tick_active: Mapped[bool] = mapped_column(Boolean, default=False)
     blue_tick_stripe_subscription_id: Mapped[Optional[str]] = mapped_column(String(100))
 
+    # Referral
+    referral_code: Mapped[Optional[str]] = mapped_column(String(10), unique=True, nullable=True, index=True)
+    referred_by_code: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    referral_reward_claimed: Mapped[bool] = mapped_column(Boolean, default=False)
+
     # Stats
     profile_views: Mapped[int] = mapped_column(Integer, default=0)
     contact_clicks: Mapped[int] = mapped_column(Integer, default=0)

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Helmet } from 'react-helmet-async'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
-import { ChevronLeft, Check, Zap, Star, Crown, CheckCircle, X, Sparkles, Clock } from 'lucide-react'
+import { ChevronLeft, Check, Zap, Star, Crown, CheckCircle, X, Sparkles, Clock, Tag } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { useQueryClient } from '@tanstack/react-query'
 import { DashboardLayout } from '@/components/layout/Layout'
@@ -9,8 +9,17 @@ import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
 import { useMyProfile } from '@/hooks/useEscorts'
 import { paymentsApi } from '@/api/payments'
+import apiClient from '@/api/client'
 import { cn } from '@/utils/cn'
 import toast from 'react-hot-toast'
+
+interface AppliedCode {
+  code: string
+  type: 'discount' | 'referral'
+  percent_off: number
+  duration_months: number
+  discount_amount_pence: number
+}
 
 const PLANS = [
   {
@@ -73,6 +82,36 @@ export function SubscriptionPage() {
   const [searchParams] = useSearchParams()
   const paymentStatus = searchParams.get('payment')
 
+  const [codeInput, setCodeInput] = useState('')
+  const [validatingCode, setValidatingCode] = useState(false)
+  const [appliedCode, setAppliedCode] = useState<AppliedCode | null>(null)
+  const [codeError, setCodeError] = useState<string | null>(null)
+
+  const validateCode = async () => {
+    const code = codeInput.trim().toUpperCase()
+    if (!code) return
+    setValidatingCode(true)
+    setCodeError(null)
+    try {
+      const { data } = await apiClient.post('/discounts/validate', {
+        code,
+        tier: 'essential',
+        billing,
+      })
+      if (data.valid) {
+        setAppliedCode({ code, type: data.code_type, percent_off: data.percent_off, duration_months: data.duration_months, discount_amount_pence: data.discount_amount_pence })
+      } else {
+        setCodeError(data.message ?? 'Invalid code')
+      }
+    } catch {
+      setCodeError('Could not validate code. Please try again.')
+    } finally {
+      setValidatingCode(false)
+    }
+  }
+
+  const removeCode = () => { setAppliedCode(null); setCodeInput(''); setCodeError(null) }
+
   if (isLoading) return <DashboardLayout><Spinner fullPage /></DashboardLayout>
   if (!escort) return null
 
@@ -100,7 +139,11 @@ export function SubscriptionPage() {
         }
       } else {
         // New subscriber — open Stripe Checkout
-        const { url } = await paymentsApi.createCheckout(tier, billing)
+        const { url } = await paymentsApi.createCheckout(
+          tier,
+          billing,
+          appliedCode ? { type: appliedCode.type, code: appliedCode.code } : undefined,
+        )
         window.location.href = url
       }
     } catch (err: any) {
@@ -297,6 +340,61 @@ export function SubscriptionPage() {
             })}
           </div>
         </section>
+
+        {/* Promo / Referral Code */}
+        {!hasActiveStripeSubscription && (
+          <section className="space-y-3 max-w-lg">
+            <button
+              onClick={() => setCodeInput(codeInput === '' && !appliedCode ? ' ' : '')}
+              className="flex items-center gap-2 text-stone-400 hover:text-gold-400 text-sm transition-colors"
+            >
+              <Tag className="w-4 h-4" />
+              Have a promo or referral code?
+            </button>
+
+            {appliedCode ? (
+              <div className="flex items-center justify-between p-4 rounded-xl bg-emerald-900/20 border border-emerald-500/30">
+                <div className="flex items-center gap-3">
+                  <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
+                  <div>
+                    <p className="text-emerald-400 text-sm font-medium">
+                      {appliedCode.code} — {appliedCode.percent_off}% off for {appliedCode.duration_months} month{appliedCode.duration_months > 1 ? 's' : ''}
+                    </p>
+                    <p className="text-emerald-600 text-xs mt-0.5">
+                      {appliedCode.type === 'referral' ? 'Referral discount — applied at checkout' : 'Promo discount — applied at checkout'}
+                    </p>
+                  </div>
+                </div>
+                <button onClick={removeCode} className="text-stone-500 hover:text-stone-300 ml-4">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={codeInput.trim()}
+                    onChange={(e) => { setCodeInput(e.target.value.toUpperCase()); setCodeError(null) }}
+                    onKeyDown={(e) => e.key === 'Enter' && validateCode()}
+                    placeholder="Enter code..."
+                    className="flex-1 bg-surface border border-surface-border rounded-xl px-4 py-2.5 text-sm text-ivory-100 placeholder-stone-600 focus:outline-none focus:border-gold-400/40"
+                  />
+                  <Button
+                    variant="outline-gold"
+                    size="sm"
+                    loading={validatingCode}
+                    onClick={validateCode}
+                    disabled={!codeInput.trim()}
+                  >
+                    Apply
+                  </Button>
+                </div>
+                {codeError && <p className="text-red-400 text-xs pl-1">{codeError}</p>}
+              </div>
+            )}
+          </section>
+        )}
 
         {/* Blue Tick section — behaviour differs by tier */}
         <section className="space-y-4">

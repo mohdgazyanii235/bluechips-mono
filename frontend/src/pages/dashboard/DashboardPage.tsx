@@ -1,10 +1,11 @@
+import React from 'react'
 import { Link } from 'react-router-dom'
 import { Helmet } from 'react-helmet-async'
 import { motion } from 'framer-motion'
 import {
   Eye, Phone, User, Camera, BadgeCheck, ShieldCheck, AlertCircle,
   TrendingUp, ToggleLeft, ToggleRight, Star, ChevronRight, Mail,
-  Sparkles, Zap, Crown, ArrowRight, XCircle,
+  Sparkles, Zap, Crown, ArrowRight, XCircle, Gift, Copy, Check,
 } from 'lucide-react'
 import { DashboardLayout } from '@/components/layout/Layout'
 import { Button } from '@/components/ui/Button'
@@ -36,6 +37,7 @@ function StatCard({ icon: Icon, label, value, color = 'gold' }: any) {
 export function DashboardPage() {
   const { data: escort, isLoading } = useMyProfile()
   const toggleAvailable = useToggleAvailableNow()
+  const [codeCopied, setCodeCopied] = React.useState(false)
 
   const { data: verificationStatus } = useQuery({
     queryKey: ['verification-status'],
@@ -290,6 +292,54 @@ export function DashboardPage() {
             })()}
           </div>
         </div>
+
+        {/* Referral Code */}
+        {(escort as any).referral_code && (
+          <div className="card-surface p-6 rounded-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-gold-400/10 border border-gold-400/20 flex items-center justify-center shrink-0">
+                <Gift className="w-5 h-5 text-gold-400" />
+              </div>
+              <div>
+                <h2 className="font-serif text-xl text-ivory-100">Your Referral Code</h2>
+                <p className="text-stone-500 text-xs mt-0.5">Share with other companions to earn rewards</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="flex-1 flex items-center justify-center bg-surface border border-surface-border rounded-xl px-6 py-4">
+                <span className="font-mono text-2xl font-bold tracking-[0.2em] gold-text">
+                  {(escort as any).referral_code}
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText((escort as any).referral_code)
+                  setCodeCopied(true)
+                  setTimeout(() => setCodeCopied(false), 2000)
+                }}
+                className="flex items-center gap-2 px-4 py-4 rounded-xl border border-surface-border bg-surface hover:border-gold-400/40 hover:text-gold-400 text-stone-400 transition-all text-sm font-medium whitespace-nowrap"
+              >
+                {codeCopied ? <><Check className="w-4 h-4 text-emerald-400" /> Copied!</> : <><Copy className="w-4 h-4" /> Copy</>}
+              </button>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-3 text-sm">
+              <div className="p-3 rounded-xl bg-surface border border-surface-border">
+                <p className="text-ivory-300 font-medium text-xs mb-1">Their reward</p>
+                <p className="text-stone-400 text-xs">New escorts who use your code get <span className="text-gold-400 font-semibold">50% off for 3 months</span></p>
+              </div>
+              <div className="p-3 rounded-xl bg-surface border border-surface-border">
+                <p className="text-ivory-300 font-medium text-xs mb-1">Your reward</p>
+                <p className="text-stone-400 text-xs">You earn <span className="text-gold-400 font-semibold">1 free month</span> of your plan when they make their first payment</p>
+              </div>
+            </div>
+
+            <p className="text-stone-600 text-xs text-center">
+              Share your code on social media, WhatsApp, or anywhere companions gather in London
+            </p>
+          </div>
+        )}
 
         {/* Profile preview link */}
         {escort.slug && escort.is_email_verified && (

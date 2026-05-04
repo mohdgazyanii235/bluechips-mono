@@ -91,4 +91,37 @@ export const adminApi = {
     const { data } = await adminClient.patch(`/admin/escorts/${id}/toggle-active`)
     return data
   },
+
+  createDiscountCode: async (payload: {
+    code: string
+    name: string
+    percent_off: number
+    applicable_tiers: string[]
+    duration_months: number
+    max_redemptions?: number | null
+  }) => {
+    const { data } = await adminClient.post('/admin/discounts', payload)
+    return data as { id: string; code: string; message: string }
+  },
+
+  listDiscountCodes: async () => {
+    const { data } = await adminClient.get('/admin/discounts')
+    return data as Array<{
+      id: string
+      code: string
+      name: string
+      percent_off: number
+      applicable_tiers: string[]
+      duration_months: number
+      max_redemptions: number | null
+      current_redemptions: number
+      is_active: boolean
+      created_at: string
+    }>
+  },
+
+  deactivateDiscountCode: async (id: string) => {
+    const { data } = await adminClient.patch(`/admin/discounts/${id}/deactivate`)
+    return data
+  },
 }

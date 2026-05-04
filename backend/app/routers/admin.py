@@ -12,6 +12,7 @@ from pydantic import BaseModel
 import stripe
 
 from app.database import get_db
+from app.models.discount import DiscountCode
 from app.models.escort import Escort
 from app.models.verification import Verification
 from app.models.admin import Admin
@@ -376,10 +377,8 @@ async def toggle_escort_active(
 
 
 def _format_time_ago(dt: datetime) -> str:
-    """Format a datetime as a relative string like '5 minutes ago'"""
     now = datetime.utcnow()
     delta = now - dt
-
     seconds = delta.total_seconds()
     if seconds < 60:
         return "just now"
@@ -392,3 +391,91 @@ def _format_time_ago(dt: datetime) -> str:
     else:
         days = int(seconds // 86400)
         return f"{days} day{'s' if days > 1 else ''} ago"
+
+
+# ── Discount Code Management ──────────────────────────────────────────────────
+
+ALLOWED_TIERS = {"essential", "premium", "elite", "blue_tick"}
+
+
+class CreateDiscountRequest(BaseModel):
+    code: str
+    name: str
+    percent_off: int
+    applicable_tiers: list[str] = []  # empty = all tiers
+    duration_months: int
+    max_redemptions: Optional[int] = None
+
+
+@router.post("/discounts", response_model=MessageResponse)
+async def create_discount_code(
+    body: CreateDiscountRequest,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    code = body.code.strip().upper()
+    if not code:
+        raise HTTPException(status_code=400, detail="Code cannot be empty")
+    if not 1 <= body.percent_off <= 100:
+        raise HTTPException(status_code=400, detail="percent_off must be 1–100")
+    if body.duration_months < 1:
+        raise HTTPException(status_code=400, detail="duration_months must be at least 1")
+    if body.applicable_tiers and not set(body.applicable_tiers).issubset(ALLOWED_TIERS):
+        raise HTTPException(status_code=400, detail=f"Invalid tiers. Allowed: {', '.join(ALLOWED_TIERS)}")
+
+    existing = await db.execute(select(DiscountCode).where(DiscountCode.code == code))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="A discount code with this name already exists")
+
+    dc = DiscountCode(
+        code=code,
+        name=body.name.strip(),
+        percent_off=body.percent_off,
+        applicable_tiers=body.applicable_tiers,
+        duration_months=body.duration_months,
+        max_redemptions=body.max_redemptions,
+    )
+    db.add(dc)
+    await db.flush()
+    return MessageResponse(message=f"Discount code '{code}' created successfully")
+
+
+@router.get("/discounts")
+async def list_discount_codes(
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(DiscountCode).order_by(DiscountCode.created_at.desc())
+    )
+    codes = result.scalars().all()
+    return [
+        {
+            "id": str(dc.id),
+            "code": dc.code,
+            "name": dc.name,
+            "percent_off": dc.percent_off,
+            "applicable_tiers": dc.applicable_tiers,
+            "duration_months": dc.duration_months,
+            "max_redemptions": dc.max_redemptions,
+            "current_redemptions": dc.current_redemptions,
+            "is_active": dc.is_active,
+            "created_at": dc.created_at.isoformat(),
+        }
+        for dc in codes
+    ]
+
+
+@router.patch("/discounts/{code_id}/deactivate", response_model=MessageResponse)
+async def deactivate_discount_code(
+    code_id: str,
+    admin: Admin = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(DiscountCode).where(DiscountCode.id == code_id))
+    dc = result.scalar_one_or_none()
+    if not dc:
+        raise HTTPException(status_code=404, detail="Discount code not found")
+    dc.is_active = False
+    await db.flush()
+    return MessageResponse(message=f"Discount code '{dc.code}' deactivated")

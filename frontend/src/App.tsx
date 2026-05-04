@@ -32,6 +32,7 @@ import { AdminDashboardPage } from '@/pages/admin/AdminDashboardPage'
 import { AdminVerificationsPage } from '@/pages/admin/AdminVerificationsPage'
 import { AdminVerificationDetailPage } from '@/pages/admin/AdminVerificationDetailPage'
 import { AdminEscortsPage } from '@/pages/admin/AdminEscortsPage'
+import { AdminDiscountsPage } from '@/pages/admin/AdminDiscountsPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
@@ -61,6 +62,7 @@ export default function App() {
         <Route path="/admin/verifications" element={<AdminRoute><AdminVerificationsPage /></AdminRoute>} />
         <Route path="/admin/verifications/:id" element={<AdminRoute><AdminVerificationDetailPage /></AdminRoute>} />
         <Route path="/admin/escorts" element={<AdminRoute><AdminEscortsPage /></AdminRoute>} />
+        <Route path="/admin/discounts" element={<AdminRoute><AdminDiscountsPage /></AdminRoute>} />
 
         {/* Escort-facing site — wrapped in age gate */}
         <Route path="*" element={

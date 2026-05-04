@@ -1,3 +1,5 @@
+import random
+import string
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +13,15 @@ from app.utils.slugify import make_slug, make_unique_slug
 from app.utils.rate_limit import is_rate_limited
 from app.services.email_service import send_verification_email, send_welcome_email
 from app.routers.deps import get_current_escort
+
+
+async def _unique_referral_code(db: AsyncSession) -> str:
+    for _ in range(20):
+        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
+        exists = await db.execute(select(Escort.id).where(Escort.referral_code == code))
+        if not exists.scalar_one_or_none():
+            return code
+    raise RuntimeError("Could not generate a unique referral code")
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -36,6 +47,7 @@ async def register(
 
     token = generate_verification_token()
     token_expiry = datetime.utcnow() + timedelta(hours=24)
+    referral_code = await _unique_referral_code(db)
     escort = Escort(
         email=data.email.lower(),
         hashed_password=hash_password(data.password),
@@ -44,6 +56,7 @@ async def register(
         email_verification_token=token,
         email_verification_token_expires_at=token_expiry,
         verification_level=0,
+        referral_code=referral_code,
     )
     db.add(escort)
     await db.flush()

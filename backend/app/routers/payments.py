@@ -1,5 +1,6 @@
 import stripe
 from datetime import datetime
+from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -7,6 +8,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.database import get_db
+from app.models.discount import DiscountCode
 from app.models.escort import Escort
 from app.models.subscription import Subscription
 from app.models.verification import Verification
@@ -24,6 +26,9 @@ TIER_PRICE_MAP = {
 
 TIER_ORDER = {"free": 0, "essential": 1, "premium": 2, "elite": 3}
 
+_TIER_ANNUAL_PRICE_PENCE = {"essential": 24990, "premium": 49990, "elite": 89990}
+_ANNUAL_AMOUNTS = {24990, 49990, 89990}
+
 
 def _stripe_client() -> stripe.StripeClient:
     if not settings.STRIPE_SECRET_KEY:
@@ -31,9 +36,79 @@ def _stripe_client() -> stripe.StripeClient:
     return stripe.StripeClient(settings.STRIPE_SECRET_KEY)
 
 
+async def _build_stripe_discount(
+    client: stripe.StripeClient,
+    db: AsyncSession,
+    body: "CheckoutRequest",
+    escort: Escort,
+) -> Optional[str]:
+    """Validate discount/referral code, apply redemption, return a Stripe coupon ID (or None)."""
+    percent_off = None
+    duration_months = None
+    label = None
+
+    if body.discount_code:
+        code = body.discount_code.strip().upper()
+        result = await db.execute(
+            select(DiscountCode).where(DiscountCode.code == code, DiscountCode.is_active == True)
+        )
+        dc = result.scalar_one_or_none()
+        if not dc:
+            raise HTTPException(status_code=400, detail="Discount code is invalid or no longer active")
+        if dc.max_redemptions is not None and dc.current_redemptions >= dc.max_redemptions:
+            raise HTTPException(status_code=400, detail="This code has reached its maximum number of uses")
+        if dc.applicable_tiers and body.tier not in dc.applicable_tiers:
+            names = ", ".join(t.title() for t in dc.applicable_tiers)
+            raise HTTPException(status_code=400, detail=f"This code is only valid for: {names}")
+        percent_off = dc.percent_off
+        duration_months = dc.duration_months
+        label = code
+        dc.current_redemptions += 1
+        await db.flush()
+
+    elif body.referral_code:
+        code = body.referral_code.strip().upper()
+        ref_result = await db.execute(select(Escort).where(Escort.referral_code == code))
+        referrer = ref_result.scalar_one_or_none()
+        if not referrer:
+            raise HTTPException(status_code=400, detail="Referral code not found")
+        if referrer.id == escort.id:
+            raise HTTPException(status_code=400, detail="You cannot use your own referral code")
+        percent_off = 50
+        duration_months = 3
+        label = f"REF-{code}"
+        escort.referred_by_code = code
+        await db.flush()
+
+    if percent_off is None:
+        return None
+
+    if body.billing == "monthly":
+        coupon = client.coupons.create(params={
+            "percent_off": percent_off,
+            "duration": "repeating",
+            "duration_in_months": duration_months,
+            "currency": "gbp",
+            "name": f"{label}: {percent_off}% off × {duration_months}mo",
+        })
+    else:
+        annual_price = _TIER_ANNUAL_PRICE_PENCE.get(body.tier, 0)
+        amount_off = max(1, int((annual_price / 12) * (percent_off / 100) * duration_months))
+        coupon = client.coupons.create(params={
+            "amount_off": amount_off,
+            "currency": "gbp",
+            "duration": "once",
+            "name": f"{label}: pro-rata {percent_off}% off × {duration_months}mo",
+        })
+
+    return coupon.id
+
+
 class CheckoutRequest(BaseModel):
-    tier: str             # essential | premium | elite
-    billing: str = "monthly"  # monthly | annual
+    tier: str
+    billing: str = "monthly"
+    discount_code: Optional[str] = None
+    referral_code: Optional[str] = None
 
 
 class CheckoutResponse(BaseModel):
@@ -85,7 +160,9 @@ async def create_checkout_session(
         escort.stripe_customer_id = customer_id
         await db.flush()
 
-    session = client.checkout.sessions.create(params={
+    coupon_id = await _build_stripe_discount(client, db, body, escort)
+
+    session_params: dict = {
         "customer": customer_id,
         "mode": "subscription",
         "line_items": [{"price": price_id, "quantity": 1}],
@@ -95,9 +172,13 @@ async def create_checkout_session(
         "subscription_data": {
             "metadata": {"escort_id": str(escort.id), "tier": body.tier, "billing": body.billing},
         },
-        "allow_promotion_codes": True,
-    })
+    }
+    if coupon_id:
+        session_params["discounts"] = [{"coupon": coupon_id}]
+    else:
+        session_params["allow_promotion_codes"] = True
 
+    session = client.checkout.sessions.create(params=session_params)
     return CheckoutResponse(url=session.url)
 
 
@@ -493,6 +574,9 @@ async def stripe_webhook(
     elif event_type == "customer.subscription.deleted":
         await _handle_subscription_deleted(data, db)
 
+    elif event_type == "invoice.paid":
+        await _handle_invoice_paid(data, db)
+
     elif event_type == "invoice.payment_failed":
         pass
 
@@ -678,4 +762,67 @@ async def _handle_subscription_deleted(sub_obj: dict, db: AsyncSession):
                 escort.subscription_tier = "free"
                 escort.stripe_subscription_id = None
                 escort.subscription_expires_at = None
+    await db.flush()
+
+
+async def _handle_invoice_paid(invoice: dict, db: AsyncSession):
+    """Award 1 free month credit to the referrer when a referred escort makes their first real payment."""
+    if invoice.get("billing_reason") not in ("subscription_cycle", "subscription_create"):
+        return
+    if invoice.get("amount_paid", 0) == 0:
+        return
+
+    stripe_customer_id = invoice.get("customer")
+    if not stripe_customer_id:
+        return
+
+    result = await db.execute(
+        select(Escort).where(
+            Escort.stripe_customer_id == stripe_customer_id,
+            Escort.referred_by_code.isnot(None),
+            Escort.referral_reward_claimed == False,
+        )
+    )
+    referred = result.scalar_one_or_none()
+    if not referred:
+        return
+
+    referred.referral_reward_claimed = True
+
+    ref_result = await db.execute(
+        select(Escort).where(Escort.referral_code == referred.referred_by_code)
+    )
+    referrer = ref_result.scalar_one_or_none()
+    if not referrer or not referrer.stripe_customer_id:
+        await db.flush()
+        return
+
+    sub_result = await db.execute(
+        select(Subscription)
+        .where(
+            Subscription.escort_id == referrer.id,
+            Subscription.status.in_(["active", "cancelling"]),
+            Subscription.tier != "blue_tick",
+        )
+        .order_by(Subscription.created_at.desc())
+    )
+    referrer_sub = sub_result.scalar_one_or_none()
+    if not referrer_sub or not referrer_sub.amount_gbp:
+        await db.flush()
+        return
+
+    credit = (referrer_sub.amount_gbp // 12
+              if referrer_sub.amount_gbp in _ANNUAL_AMOUNTS
+              else referrer_sub.amount_gbp)
+    try:
+        stripe.Customer.create_balance_transaction(
+            referrer.stripe_customer_id,
+            amount=-credit,
+            currency="gbp",
+            description=f"Referral reward: {referred.stage_name} joined using your code",
+            api_key=settings.STRIPE_SECRET_KEY,
+        )
+    except Exception as e:
+        print(f"[STRIPE] Referral credit failed for referrer {referrer.id}: {e}")
+
     await db.flush()
