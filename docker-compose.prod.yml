@@ -6,12 +6,13 @@ services:
     env_file: ./backend/.env.prod
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"  # Loopback only — access via SSH tunnel
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 5
-    # Not exposed on host — only reachable within the Docker network
 
   redis:
     image: redis:7-alpine
