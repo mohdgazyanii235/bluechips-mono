@@ -1,5 +1,6 @@
+import calendar as cal
 import stripe
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,17 +22,77 @@ router = APIRouter(tags=["Payments"])
 
 TIER_ORDER = {"free": 0, "essential": 1, "premium": 2, "elite": 3}
 
-# Maps tier+billing → PlatformConfig field names for Stripe price ID and annual pence
+# Maps tier+billing → PlatformConfig field names for Stripe price ID and pence amount
 _TIER_STRIPE_FIELD = {
     "essential": {"monthly": "stripe_essential_monthly_id", "annual": "stripe_essential_annual_id"},
     "premium":   {"monthly": "stripe_premium_monthly_id",   "annual": "stripe_premium_annual_id"},
     "elite":     {"monthly": "stripe_elite_monthly_id",     "annual": "stripe_elite_annual_id"},
 }
-_TIER_ANNUAL_PENCE_FIELD = {
-    "essential": "essential_annual_pence",
-    "premium": "premium_annual_pence",
-    "elite": "elite_annual_pence",
+_TIER_PENCE_FIELD = {
+    "essential": {"monthly": "essential_monthly_pence", "annual": "essential_annual_pence"},
+    "premium":   {"monthly": "premium_monthly_pence",   "annual": "premium_annual_pence"},
+    "elite":     {"monthly": "elite_monthly_pence",     "annual": "elite_annual_pence"},
 }
+
+
+# ---------------------------------------------------------------------------
+# Billing cycle helpers — all subscriptions anchor to 1st of month / Jan 1st
+# ---------------------------------------------------------------------------
+
+def _next_month_first() -> date:
+    """Calendar date for the 1st of next month (UTC today)."""
+    today = datetime.utcnow().date()
+    if today.month == 12:
+        return date(today.year + 1, 1, 1)
+    return date(today.year, today.month + 1, 1)
+
+
+def _next_jan_first() -> date:
+    """Calendar date for January 1st of next year (UTC today)."""
+    return date(datetime.utcnow().year + 1, 1, 1)
+
+
+def _to_unix(d: date) -> int:
+    """Convert a date (UTC midnight) to a Unix timestamp."""
+    return int(cal.timegm(datetime(d.year, d.month, d.day).timetuple()))
+
+
+def _monthly_prorate_info() -> dict:
+    """
+    Returns info needed to prorate a monthly subscription based on the current calendar month.
+    remaining_days: days from today until the 1st of next month.
+    days_in_month: total days in the current calendar month.
+    next_1st: the date for the 1st of next month.
+    fraction: remaining_days / days_in_month
+    """
+    today = datetime.utcnow().date()
+    next_1st = _next_month_first()
+    remaining_days = (next_1st - today).days
+    days_in_month = cal.monthrange(today.year, today.month)[1]
+    return {
+        "today": today,
+        "next_1st": next_1st,
+        "remaining_days": remaining_days,
+        "days_in_month": days_in_month,
+        "fraction": remaining_days / days_in_month,
+    }
+
+
+def _annual_prorate_info() -> dict:
+    """
+    Returns info needed to prorate an annual subscription based on the current calendar year.
+    """
+    today = datetime.utcnow().date()
+    next_jan1 = _next_jan_first()
+    remaining_days = (next_jan1 - today).days
+    days_in_year = 366 if (today.year % 4 == 0 and (today.year % 100 != 0 or today.year % 400 == 0)) else 365
+    return {
+        "today": today,
+        "next_1st": next_jan1,
+        "remaining_days": remaining_days,
+        "days_in_month": days_in_year,  # reuse field name for generic use
+        "fraction": remaining_days / days_in_year,
+    }
 
 
 async def _get_platform_config(db: AsyncSession) -> PlatformConfig:
@@ -105,9 +166,8 @@ async def _build_stripe_discount(
             "name": f"{label}: {percent_off}% off × {duration_months}mo",
         })
     else:
-        annual_field = _TIER_ANNUAL_PENCE_FIELD.get(body.tier, "")
-        annual_price = getattr(cfg, annual_field, 0) if annual_field else 0
-        amount_off = max(1, int((annual_price / 12) * (percent_off / 100) * duration_months))
+        annual_pence = getattr(cfg, _TIER_PENCE_FIELD[body.tier]["annual"], 0)
+        amount_off = max(1, int((annual_pence / 12) * (percent_off / 100) * duration_months))
         coupon = client.coupons.create(params={
             "amount_off": amount_off,
             "currency": "gbp",
@@ -148,7 +208,7 @@ async def create_checkout_session(
             raise HTTPException(status_code=503, detail="Annual billing is not yet available. Please select monthly billing.")
         raise HTTPException(status_code=503, detail="Tier price not configured")
 
-    # Check for pending verification
+    # Block if a verification is pending
     pending_result = await db.execute(
         select(Verification).where(
             Verification.escort_id == escort.id,
@@ -177,6 +237,11 @@ async def create_checkout_session(
 
     coupon_id = await _build_stripe_discount(client, db, body, escort, cfg)
 
+    # Anchor billing to 1st of next month (monthly) or Jan 1st (annual)
+    # Stripe will automatically prorate the first invoice for the partial period.
+    anchor_date = _next_month_first() if body.billing == "monthly" else _next_jan_first()
+    anchor_ts = _to_unix(anchor_date)
+
     session_params: dict = {
         "customer": customer_id,
         "mode": "subscription",
@@ -186,6 +251,8 @@ async def create_checkout_session(
         "metadata": {"escort_id": str(escort.id), "tier": body.tier, "billing": body.billing},
         "subscription_data": {
             "metadata": {"escort_id": str(escort.id), "tier": body.tier, "billing": body.billing},
+            "billing_cycle_anchor": anchor_ts,
+            "proration_behavior": "create_prorations",
         },
     }
     if coupon_id:
@@ -195,6 +262,89 @@ async def create_checkout_session(
 
     session = client.checkout.sessions.create(params=session_params)
     return CheckoutResponse(url=session.url)
+
+
+@router.get("/payments/upgrade-preview")
+async def get_upgrade_preview(
+    tier: str,
+    billing: str = "monthly",
+    escort: Escort = Depends(get_current_verified_escort),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns what the escort will be charged (or told) when changing plans.
+    Used by the frontend to show a confirmation modal before proceeding.
+    """
+    if tier not in _TIER_STRIPE_FIELD:
+        raise HTTPException(status_code=400, detail="Invalid tier")
+    if billing not in ("monthly", "annual"):
+        raise HTTPException(status_code=400, detail="billing must be 'monthly' or 'annual'")
+
+    cfg = await _get_platform_config(db)
+    current_tier = escort.subscription_tier
+
+    # Determine proration window
+    if billing == "annual":
+        info = _annual_prorate_info()
+    else:
+        info = _monthly_prorate_info()
+
+    remaining_days: int = info["remaining_days"]
+    total_days: int = info["days_in_month"]
+    # Format as "1 July 2026"
+    d: date = info["next_1st"]
+    next_billing_date: str = f"{d.day} {d.strftime('%B')} {d.year}"
+
+    new_price_pence: int = getattr(cfg, _TIER_PENCE_FIELD[tier][billing], 0)
+
+    is_upgrade = TIER_ORDER.get(tier, 0) > TIER_ORDER.get(current_tier, 0)
+
+    if current_tier == "free" or not escort.stripe_subscription_id:
+        # New subscription via checkout — show what Stripe will charge for the partial month
+        charge_now = round(new_price_pence * remaining_days / total_days)
+        return {
+            "type": "new",
+            "from_tier": current_tier,
+            "to_tier": tier,
+            "billing": billing,
+            "charge_now_pence": charge_now,
+            "then_pence": new_price_pence,
+            "remaining_days": remaining_days,
+            "total_days": total_days,
+            "next_billing_date": next_billing_date,
+        }
+
+    old_billing = "monthly"  # assume monthly for current sub (most common)
+    old_price_pence: int = getattr(cfg, _TIER_PENCE_FIELD[current_tier][old_billing], 0)
+
+    if is_upgrade:
+        diff = new_price_pence - old_price_pence
+        charge_now = max(0, round(diff * remaining_days / total_days))
+        return {
+            "type": "upgrade",
+            "from_tier": current_tier,
+            "to_tier": tier,
+            "billing": billing,
+            "charge_now_pence": charge_now,
+            "then_pence": new_price_pence,
+            "remaining_days": remaining_days,
+            "total_days": total_days,
+            "next_billing_date": next_billing_date,
+        }
+    else:
+        # Downgrade: no charge today, effective from next billing date
+        return {
+            "type": "downgrade",
+            "from_tier": current_tier,
+            "to_tier": tier,
+            "billing": billing,
+            "charge_now_pence": 0,
+            "then_pence": new_price_pence,
+            "remaining_days": remaining_days,
+            "total_days": total_days,
+            "next_billing_date": next_billing_date,
+            "effective_date": next_billing_date,
+        }
 
 
 @router.get("/payments/subscription")
@@ -302,6 +452,9 @@ async def create_blue_tick_checkout(
         escort.stripe_customer_id = customer_id
         await db.flush()
 
+    # Anchor Blue Tick to 1st of next month as well
+    anchor_ts = _to_unix(_next_month_first())
+
     session = client.checkout.sessions.create(params={
         "customer": customer_id,
         "mode": "subscription",
@@ -311,6 +464,8 @@ async def create_blue_tick_checkout(
         ],
         "subscription_data": {
             "metadata": {"escort_id": str(escort.id), "tier": "blue_tick"},
+            "billing_cycle_anchor": anchor_ts,
+            "proration_behavior": "create_prorations",
         },
         "success_url": f"{settings.FRONTEND_URL}/dashboard/verify?blue_tick=success",
         "cancel_url": f"{settings.FRONTEND_URL}/dashboard/verify?blue_tick=cancelled",
@@ -327,9 +482,14 @@ async def upgrade_tier(
     escort: Escort = Depends(get_current_verified_escort),
     db: AsyncSession = Depends(get_db),
 ):
-    """Switch an existing subscription to a different tier (or billing period) without creating
-    a new subscription. The existing Stripe subscription is modified in-place so the escort is
-    never charged for two plans simultaneously. Stripe prorates the difference immediately."""
+    """
+    Switch an existing subscription to a different tier.
+
+    Upgrades: charge a calendar-month pro-rata amount immediately (difference × remaining days / days in month),
+    then update the subscription price. No Stripe-side proration — we control the exact amount.
+
+    Downgrades: switch price at next billing period with no immediate charge.
+    """
     if body.tier not in _TIER_STRIPE_FIELD:
         raise HTTPException(status_code=400, detail="Invalid tier")
     if body.billing not in ("monthly", "annual"):
@@ -347,7 +507,6 @@ async def upgrade_tier(
 
     client = _stripe_client()
 
-    # Retrieve the current subscription to get the item ID and current price
     try:
         sub = client.subscriptions.retrieve(escort.stripe_subscription_id)
     except Exception:
@@ -359,16 +518,13 @@ async def upgrade_tier(
     item_id = sub["items"]["data"][0]["id"]
     current_price_id = sub["items"]["data"][0]["price"]["id"]
 
-    # Guard against no-op: compare actual Stripe price IDs, not tier names.
-    # This correctly allows switching monthly→annual on the same tier.
     if current_price_id == price_id:
         raise HTTPException(status_code=400, detail="You are already on this plan with this billing period")
 
     is_downgrade = TIER_ORDER.get(body.tier, 0) < TIER_ORDER.get(escort.subscription_tier, 0)
 
     if is_downgrade:
-        # Downgrade: switch price at next renewal only — no credit, no immediate charge.
-        # The user keeps the higher tier until their current billing period ends.
+        # Downgrade: switch price at next renewal — no immediate charge.
         client.subscriptions.update(
             escort.stripe_subscription_id,
             params={
@@ -388,20 +544,79 @@ async def upgrade_tier(
         if sub_record:
             sub_record.pending_tier = body.tier
             sub_record.stripe_price_id = price_id
-        # escort.subscription_tier stays as-is until the period ends
-
         await db.flush()
+
         tier_label = body.tier.capitalize()
         return MessageResponse(
             message=f"Downgrade to {tier_label} scheduled. You'll keep your current plan until the end of your billing period."
         )
 
-    # Upgrade: charge prorated difference immediately and switch right away
+    # ── Upgrade: charge calendar-based pro-rata immediately ──────────────────
+
+    if body.billing == "annual":
+        info = _annual_prorate_info()
+    else:
+        info = _monthly_prorate_info()
+
+    remaining_days: int = info["remaining_days"]
+    total_days: int = info["days_in_month"]
+    today = info["today"]
+
+    # Current subscription's billing interval
+    current_interval = sub["items"]["data"][0]["price"].get("recurring", {}).get("interval", "month")
+    old_billing = "annual" if current_interval == "year" else "monthly"
+
+    old_price_pence: int = getattr(cfg, _TIER_PENCE_FIELD[escort.subscription_tier][old_billing], 0)
+    new_price_pence: int = getattr(cfg, _TIER_PENCE_FIELD[body.tier][body.billing], 0)
+
+    # If switching billing period along with tier, compare monthly-equivalent rates
+    if old_billing != body.billing:
+        old_monthly = getattr(cfg, _TIER_PENCE_FIELD[escort.subscription_tier]["monthly"], 0)
+        new_monthly = getattr(cfg, _TIER_PENCE_FIELD[body.tier]["monthly"], 0)
+        diff_pence = new_monthly - old_monthly
+    else:
+        diff_pence = new_price_pence - old_price_pence
+
+    pro_rata_pence = max(0, round(diff_pence * remaining_days / total_days))
+
+    # Create and immediately charge a Stripe invoice for the pro-rata amount
+    if pro_rata_pence > 0:
+        if not escort.stripe_customer_id:
+            raise HTTPException(status_code=400, detail="No Stripe customer found for this account")
+        invoice_id: Optional[str] = None
+        try:
+            month_name = today.strftime("%B")
+            client.invoice_items.create(params={
+                "customer": escort.stripe_customer_id,
+                "amount": pro_rata_pence,
+                "currency": "gbp",
+                "description": (
+                    f"Plan upgrade: {escort.subscription_tier.capitalize()} → {body.tier.capitalize()} "
+                    f"({remaining_days} of {total_days} days remaining in {month_name})"
+                ),
+            })
+            invoice_obj = client.invoices.create(params={
+                "customer": escort.stripe_customer_id,
+                "auto_advance": False,
+            })
+            invoice_id = invoice_obj.id
+            client.invoices.finalize_invoice(invoice_id, params={})
+            client.invoices.pay(invoice_id, params={})
+        except stripe.StripeError as e:
+            err_msg = getattr(e, "user_message", None) or str(e)
+            if invoice_id:
+                try:
+                    client.invoices.void_invoice(invoice_id, params={})
+                except Exception:
+                    pass
+            raise HTTPException(status_code=402, detail=f"Payment failed: {err_msg}")
+
+    # Update subscription price — no Stripe proration (we already charged manually above)
     client.subscriptions.update(
         escort.stripe_subscription_id,
         params={
             "items": [{"id": item_id, "price": price_id}],
-            "proration_behavior": "always_invoice",
+            "proration_behavior": "none",
             "metadata": {"escort_id": str(escort.id), "tier": body.tier, "billing": body.billing},
         },
     )
@@ -416,13 +631,13 @@ async def upgrade_tier(
     if sub_record:
         sub_record.tier = body.tier
         sub_record.stripe_price_id = price_id
-        sub_record.pending_tier = None  # clear any pending downgrade if upgrading again
+        sub_record.pending_tier = None
 
     escort.subscription_tier = body.tier
     await db.flush()
 
     tier_label = body.tier.capitalize()
-    return MessageResponse(message=f"Successfully upgraded to {tier_label}! Your billing has been adjusted.")
+    return MessageResponse(message=f"Successfully upgraded to {tier_label}!")
 
 
 def _period_end_from_stripe(updated: dict) -> datetime | None:
@@ -457,7 +672,6 @@ async def cancel_subscription(
         if period_end:
             existing.current_period_end = period_end
     else:
-        # Subscription pre-dates our DB tracking — create the record now
         db.add(Subscription(
             escort_id=escort.id,
             tier=escort.subscription_tier,
@@ -496,7 +710,6 @@ async def cancel_blue_tick(
         if period_end:
             existing.current_period_end = period_end
     else:
-        # Blue Tick pre-dates our DB tracking — create the record now
         db.add(Subscription(
             escort_id=escort.id,
             tier="blue_tick",
@@ -614,13 +827,11 @@ async def _handle_checkout_completed(session: dict, db: AsyncSession, background
         return
 
     # Security: verify the Stripe customer matches the stored customer for this escort.
-    # Prevents forged metadata from hijacking another escort's subscription.
     if escort.stripe_customer_id and escort.stripe_customer_id != stripe_customer_id:
         print(f"[SECURITY] Stripe webhook customer mismatch for escort {escort_id}: "
               f"expected {escort.stripe_customer_id}, got {stripe_customer_id}")
         return
 
-    # Store customer ID if this is their first payment
     if not escort.stripe_customer_id and stripe_customer_id:
         escort.stripe_customer_id = stripe_customer_id
 
@@ -635,7 +846,6 @@ async def _handle_checkout_completed(session: dict, db: AsyncSession, background
     if tier == "blue_tick":
         escort.blue_tick_stripe_subscription_id = subscription_id
 
-        # Create / replace Subscription record so cancellation state can be tracked via webhooks
         old_bt_result = await db.execute(
             select(Subscription).where(
                 Subscription.escort_id == escort.id,
@@ -656,7 +866,6 @@ async def _handle_checkout_completed(session: dict, db: AsyncSession, background
             current_period_end=period_end,
         ))
 
-        # Only create a pending verification record if one doesn't already exist
         existing = await db.execute(
             select(Verification).where(
                 Verification.escort_id == escort.id,
@@ -711,7 +920,7 @@ async def _handle_checkout_completed(session: dict, db: AsyncSession, background
 
 async def _handle_subscription_updated(sub_obj: dict, db: AsyncSession):
     subscription_id = sub_obj.get("id")
-    status = sub_obj.get("status")  # active, past_due, cancelled, trialing
+    status = sub_obj.get("status")
     cancel_at_period_end = sub_obj.get("cancel_at_period_end", False)
     escort_id = sub_obj.get("metadata", {}).get("escort_id")
 
@@ -725,7 +934,6 @@ async def _handle_subscription_updated(sub_obj: dict, db: AsyncSession):
     period_start = datetime.utcfromtimestamp(sub_obj["current_period_start"]) if sub_obj.get("current_period_start") else None
     period_end = datetime.utcfromtimestamp(sub_obj["current_period_end"]) if sub_obj.get("current_period_end") else None
 
-    # Detect billing period renewal: period_start advanced beyond the stored one
     period_renewed = (
         period_start is not None
         and sub.current_period_start is not None
@@ -744,7 +952,6 @@ async def _handle_subscription_updated(sub_obj: dict, db: AsyncSession):
         if escort:
             if period_end:
                 escort.subscription_expires_at = period_end
-            # Apply pending downgrade now that the new billing period has started
             if period_renewed and sub.pending_tier:
                 escort.subscription_tier = sub.pending_tier
                 sub.tier = sub.pending_tier
@@ -828,9 +1035,10 @@ async def _handle_invoice_paid(invoice: dict, db: AsyncSession):
         await db.flush()
         return
 
-    credit = (referrer_sub.amount_gbp // 12
-              if referrer_sub.amount_gbp in _ANNUAL_AMOUNTS
-              else referrer_sub.amount_gbp)
+    # If amount > £50 (5000p), treat as annual and divide by 12 to get monthly credit
+    amount = referrer_sub.amount_gbp
+    credit = amount // 12 if amount > 5000 else amount
+
     try:
         stripe.Customer.create_balance_transaction(
             referrer.stripe_customer_id,

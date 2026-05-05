@@ -1,5 +1,18 @@
 import apiClient from './client'
 
+export interface UpgradePreview {
+  type: 'new' | 'upgrade' | 'downgrade'
+  from_tier: string
+  to_tier: string
+  billing: string
+  charge_now_pence: number
+  then_pence: number
+  remaining_days: number
+  total_days: number
+  next_billing_date: string
+  effective_date?: string
+}
+
 export const paymentsApi = {
   /** New subscription — opens Stripe Checkout page */
   createCheckout: async (
@@ -11,6 +24,12 @@ export const paymentsApi = {
     if (promo?.type === 'discount') payload.discount_code = promo.code
     if (promo?.type === 'referral') payload.referral_code = promo.code
     const { data } = await apiClient.post('/payments/checkout', payload)
+    return data
+  },
+
+  /** Preview what the user will pay before confirming an upgrade/downgrade */
+  getUpgradePreview: async (tier: string, billing: 'monthly' | 'annual' = 'monthly'): Promise<UpgradePreview> => {
+    const { data } = await apiClient.get('/payments/upgrade-preview', { params: { tier, billing } })
     return data
   },
 

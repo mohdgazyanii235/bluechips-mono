@@ -1,14 +1,14 @@
 import { useState } from 'react'
 import { Helmet } from 'react-helmet-async'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
-import { ChevronLeft, Check, Zap, Star, Crown, CheckCircle, X, Sparkles, Clock, Tag } from 'lucide-react'
-import { motion } from 'framer-motion'
+import { ChevronLeft, Check, Zap, Star, Crown, CheckCircle, X, Sparkles, Clock, Tag, AlertTriangle, ArrowRight } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { DashboardLayout } from '@/components/layout/Layout'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
 import { useMyProfile } from '@/hooks/useEscorts'
-import { paymentsApi } from '@/api/payments'
+import { paymentsApi, UpgradePreview } from '@/api/payments'
 import apiClient from '@/api/client'
 import { cn } from '@/utils/cn'
 import toast from 'react-hot-toast'
@@ -79,8 +79,8 @@ const PLAN_META = [
 ]
 
 const DEFAULT_PRICING: Pricing = {
-  essential_monthly_pence: 1199,
-  essential_annual_pence: 11990,
+  essential_monthly_pence: 1299,
+  essential_annual_pence: 12990,
   premium_monthly_pence: 1899,
   premium_annual_pence: 18990,
   elite_monthly_pence: 2399,
@@ -95,6 +95,134 @@ function fmt(pence: number) {
 
 type Billing = 'monthly' | 'annual'
 
+// ---------------------------------------------------------------------------
+// Confirmation modal
+// ---------------------------------------------------------------------------
+
+interface PlanChangeModalProps {
+  preview: UpgradePreview
+  planName: string
+  onConfirm: () => void
+  onCancel: () => void
+  loading: boolean
+}
+
+function PlanChangeModal({ preview, planName, onConfirm, onCancel, loading }: PlanChangeModalProps) {
+  const isUpgrade = preview.type === 'upgrade' || preview.type === 'new'
+  const isDowngrade = preview.type === 'downgrade'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onCancel} />
+
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 16 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 8 }}
+        className="relative bg-stone-950 border border-surface-border rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-5"
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="font-serif text-xl text-ivory-100">
+              {isDowngrade ? 'Confirm Downgrade' : `Switch to ${planName}`}
+            </h2>
+            <p className="text-stone-500 text-sm mt-1">
+              {isDowngrade
+                ? `From ${preview.next_billing_date} onwards`
+                : 'Review your charges before confirming'}
+            </p>
+          </div>
+          <button onClick={onCancel} className="text-stone-500 hover:text-stone-300 transition-colors mt-0.5">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Charge breakdown */}
+        {isUpgrade && (
+          <div className="space-y-3">
+            {/* Today's charge */}
+            <div className="rounded-xl bg-gold-400/5 border border-gold-400/20 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-ivory-100 text-sm font-medium">Charged today</p>
+                  <p className="text-stone-500 text-xs mt-0.5">
+                    Pro-rata: {preview.remaining_days} of {preview.total_days} days remaining this month
+                  </p>
+                </div>
+                <p className="font-serif text-2xl text-gold-400">{fmt(preview.charge_now_pence)}</p>
+              </div>
+              <div className="h-1.5 rounded-full bg-stone-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-gold-400/60"
+                  style={{ width: `${Math.round((preview.remaining_days / preview.total_days) * 100)}%` }}
+                />
+              </div>
+              <p className="text-stone-600 text-xs">
+                {Math.round((preview.remaining_days / preview.total_days) * 100)}% of this month remains
+              </p>
+            </div>
+
+            {/* Future charge */}
+            <div className="rounded-xl bg-stone-900 border border-surface-border p-4 flex items-center justify-between">
+              <div>
+                <p className="text-ivory-200 text-sm font-medium">From {preview.next_billing_date}</p>
+                <p className="text-stone-500 text-xs mt-0.5">
+                  {planName} — renews on the 1st each month
+                </p>
+              </div>
+              <p className="text-ivory-100 font-semibold">{fmt(preview.then_pence)}<span className="text-stone-500 text-xs font-normal">/mo</span></p>
+            </div>
+          </div>
+        )}
+
+        {isDowngrade && (
+          <div className="space-y-3">
+            <div className="rounded-xl bg-stone-900 border border-surface-border p-4 space-y-2">
+              <div className="flex items-center gap-2 text-amber-400">
+                <Clock className="w-4 h-4 shrink-0" />
+                <p className="text-sm font-medium">No charge today</p>
+              </div>
+              <p className="text-stone-400 text-sm">
+                You keep your current plan until <strong className="text-ivory-200">{preview.next_billing_date}</strong>.
+              </p>
+              <p className="text-stone-400 text-sm">
+                From that date, you'll be billed <strong className="text-ivory-200">{fmt(preview.then_pence)}/month</strong> for {planName}.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Plan change summary */}
+        <div className="flex items-center gap-2 text-xs text-stone-500">
+          <span className="capitalize">{preview.from_tier}</span>
+          <ArrowRight className="w-3 h-3" />
+          <span className="capitalize text-ivory-300 font-medium">{preview.to_tier}</span>
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-3">
+          <Button variant="ghost" fullWidth onClick={onCancel} disabled={loading}>
+            Cancel
+          </Button>
+          <Button variant="gold" fullWidth onClick={onConfirm} loading={loading}>
+            {isDowngrade
+              ? `Confirm Downgrade`
+              : preview.charge_now_pence === 0
+                ? `Confirm Switch`
+                : `Pay ${fmt(preview.charge_now_pence)} & Switch`}
+          </Button>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main page
+// ---------------------------------------------------------------------------
+
 export function SubscriptionPage() {
   const { data: escort, isLoading } = useMyProfile()
   const { data: pricing = DEFAULT_PRICING } = useQuery<Pricing>({
@@ -104,7 +232,6 @@ export function SubscriptionPage() {
   })
   const qc = useQueryClient()
   const navigate = useNavigate()
-  const [loadingTier, setLoadingTier] = useState<string | null>(null)
   const [billing, setBilling] = useState<Billing>('monthly')
   const [searchParams] = useSearchParams()
   const paymentStatus = searchParams.get('payment')
@@ -113,6 +240,16 @@ export function SubscriptionPage() {
   const [validatingCode, setValidatingCode] = useState(false)
   const [appliedCode, setAppliedCode] = useState<AppliedCode | null>(null)
   const [codeError, setCodeError] = useState<string | null>(null)
+
+  // Modal state
+  const [pendingChange, setPendingChange] = useState<{
+    preview: UpgradePreview
+    tier: string
+    planName: string
+    isNewSubscription: boolean
+  } | null>(null)
+  const [previewLoading, setPreviewLoading] = useState<string | null>(null)
+  const [confirmLoading, setConfirmLoading] = useState(false)
 
   const validateCode = async () => {
     const code = codeInput.trim().toUpperCase()
@@ -147,42 +284,71 @@ export function SubscriptionPage() {
   const isPremiumOrElite = currentTier === 'premium' || currentTier === 'elite'
   const hasActiveStripeSubscription = !!(escort as any).stripe_subscription_id
 
-  const handleSubscribe = async (tier: string) => {
+  const handleSubscribeClick = async (tier: string, planName: string) => {
     if (!escort.is_email_verified) {
       toast.error('Please verify your email before subscribing')
       return
     }
-    setLoadingTier(tier)
+
+    setPreviewLoading(tier)
     try {
-      if (hasActiveStripeSubscription) {
-        // Existing subscriber — modify the subscription in-place, no redirect
-        const { message } = await paymentsApi.upgradeTier(tier, billing)
-        toast.success(message)
-        qc.invalidateQueries({ queryKey: ['my-profile'] })
-        qc.invalidateQueries({ queryKey: ['subscription'] })
-        // For upgrades to premium/elite: go to profile so they can upload their new photo allowance
-        if (tier === 'premium' || tier === 'elite') {
-          navigate('/dashboard/profile')
-        }
-      } else {
-        // New subscriber — open Stripe Checkout
+      const preview = await paymentsApi.getUpgradePreview(tier, billing)
+      const isNewSub = !hasActiveStripeSubscription || currentTier === 'free'
+      setPendingChange({ preview, tier, planName, isNewSubscription: isNewSub })
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail ?? 'Could not load plan details. Please try again.')
+    } finally {
+      setPreviewLoading(null)
+    }
+  }
+
+  const handleConfirm = async () => {
+    if (!pendingChange) return
+    const { tier, isNewSubscription } = pendingChange
+    setConfirmLoading(true)
+    try {
+      if (isNewSubscription) {
+        // New subscriber — redirect to Stripe Checkout
         const { url } = await paymentsApi.createCheckout(
           tier,
           billing,
           appliedCode ? { type: appliedCode.type, code: appliedCode.code } : undefined,
         )
         window.location.href = url
+      } else {
+        // Existing subscriber — upgrade/downgrade in-place
+        const { message } = await paymentsApi.upgradeTier(tier, billing)
+        toast.success(message)
+        qc.invalidateQueries({ queryKey: ['my-profile'] })
+        qc.invalidateQueries({ queryKey: ['subscription'] })
+        setPendingChange(null)
+        if (tier === 'premium' || tier === 'elite') {
+          navigate('/dashboard/profile')
+        }
       }
     } catch (err: any) {
       toast.error(err?.response?.data?.detail ?? 'Could not process. Please try again.')
     } finally {
-      setLoadingTier(null)
+      setConfirmLoading(false)
     }
   }
 
   return (
     <DashboardLayout>
       <Helmet><title>Plans & Billing — Bluechips London</title></Helmet>
+
+      {/* Confirmation modal */}
+      <AnimatePresence>
+        {pendingChange && (
+          <PlanChangeModal
+            preview={pendingChange.preview}
+            planName={pendingChange.planName}
+            onConfirm={handleConfirm}
+            onCancel={() => { if (!confirmLoading) setPendingChange(null) }}
+            loading={confirmLoading}
+          />
+        )}
+      </AnimatePresence>
 
       <div className="page-container py-10 space-y-12">
         {/* Header */}
@@ -236,7 +402,17 @@ export function SubscriptionPage() {
           </div>
         )}
 
-        {/* Billing toggle */}
+        {/* Billing info note */}
+        <div className="flex items-start gap-2.5 p-3 rounded-xl bg-blue-900/10 border border-blue-800/20 text-blue-400 text-xs">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <p>
+            All subscriptions bill on the <strong>1st of each month</strong> (annual: 1st January).
+            Your first payment is pro-rated for the remaining days in the current month.
+            Upgrades charge only the pro-rata difference — you'll see the exact amount before confirming.
+          </p>
+        </div>
+
+        {/* Billing toggle + Plans */}
         <section className="space-y-6">
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div>
@@ -244,7 +420,6 @@ export function SubscriptionPage() {
               <p className="text-stone-500 text-sm mt-1">All plans include your listing and searchable profile.</p>
             </div>
 
-            {/* Monthly / Annual toggle */}
             <div className="flex items-center gap-1 p-1 rounded-xl bg-surface border border-surface-border">
               <button
                 onClick={() => setBilling('monthly')}
@@ -279,13 +454,11 @@ export function SubscriptionPage() {
             {PLAN_META.map((plan, i) => {
               const isActive = plan.id === currentTier
               const Icon = plan.icon
-              const isLoading = loadingTier === plan.id
+              const isLoadingThis = previewLoading === plan.id
               const monthlyPence = pricing[plan.monthlyKey]
               const annualPence = pricing[plan.annualKey]
               const price = billing === 'annual' ? annualPence : monthlyPence
-              const perMonth = billing === 'annual'
-                ? Math.round(annualPence / 12)
-                : monthlyPence
+              const perMonth = billing === 'annual' ? Math.round(annualPence / 12) : monthlyPence
               const saving = monthlyPence * 12 - annualPence
 
               return (
@@ -352,16 +525,10 @@ export function SubscriptionPage() {
                     <Button
                       variant={plan.popular ? 'gold' : 'outline-gold'}
                       fullWidth
-                      loading={isLoading}
-                      onClick={() => handleSubscribe(plan.id)}
+                      loading={isLoadingThis}
+                      onClick={() => handleSubscribeClick(plan.id, plan.name)}
                     >
-                      {currentTier === 'free'
-                        ? billing === 'annual'
-                          ? `Subscribe — ${fmt(price)}/yr`
-                          : `Subscribe — ${fmt(price)}/mo`
-                        : hasActiveStripeSubscription
-                          ? `Switch to ${plan.name}`
-                          : `Subscribe — ${fmt(price)}${billing === 'annual' ? '/yr' : '/mo'}`}
+                      {currentTier === 'free' ? `Subscribe — ${fmt(billing === 'annual' ? price : price)}/mo` : `Switch to ${plan.name}`}
                     </Button>
                   )}
                 </motion.div>
@@ -370,7 +537,7 @@ export function SubscriptionPage() {
           </div>
         </section>
 
-        {/* Promo / Referral Code */}
+        {/* Promo / Referral Code — only for new subscribers */}
         {!hasActiveStripeSubscription && (
           <section className="space-y-3 max-w-lg">
             <button
@@ -425,7 +592,7 @@ export function SubscriptionPage() {
           </section>
         )}
 
-        {/* Blue Tick section — behaviour differs by tier */}
+        {/* Blue Tick section */}
         <section className="space-y-4">
           <div>
             <h2 className="font-serif text-2xl text-ivory-100">Blue Tick</h2>
@@ -439,7 +606,6 @@ export function SubscriptionPage() {
           </div>
 
           {isPremiumOrElite ? (
-            /* ── Premium / Elite: Blue Tick is free and automatic ── */
             <div className="card-surface rounded-2xl p-6 space-y-5 max-w-lg">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -491,7 +657,6 @@ export function SubscriptionPage() {
               )}
             </div>
           ) : currentTier === 'essential' ? (
-            /* ── Essential: Blue Tick is a paid add-on ── */
             <div className="card-surface rounded-2xl p-6 space-y-5 max-w-lg">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -500,7 +665,7 @@ export function SubscriptionPage() {
                     {escort.blue_tick_active && (
                       <span className="bg-blue-500/10 text-blue-400 border border-blue-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full">ACTIVE</span>
                     )}
-                    {!escort.blue_tick_active && escort.blue_tick_stripe_subscription_id && (
+                    {!escort.blue_tick_active && (escort as any).blue_tick_stripe_subscription_id && (
                       <span className="bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full">PENDING REVIEW</span>
                     )}
                   </h3>
@@ -519,7 +684,7 @@ export function SubscriptionPage() {
                   </li>
                 ))}
               </ul>
-              {escort.blue_tick_stripe_subscription_id ? (
+              {(escort as any).blue_tick_stripe_subscription_id ? (
                 <Link to="/dashboard/subscriptions">
                   <Button variant="ghost" fullWidth>
                     {escort.blue_tick_active ? 'Manage Blue Tick' : 'View Blue Tick Status →'}
@@ -541,7 +706,6 @@ export function SubscriptionPage() {
               )}
             </div>
           ) : (
-            /* ── Free tier: must subscribe first ── */
             <div className="card-surface rounded-2xl p-6 max-w-lg">
               <p className="text-stone-500 text-sm text-center">
                 Subscribe to a paid plan to unlock the Blue Tick.
@@ -551,7 +715,7 @@ export function SubscriptionPage() {
         </section>
 
         <div className="text-center p-6 rounded-xl border border-stone-800 bg-stone-900/20 max-w-lg mx-auto space-y-1">
-          <p className="text-stone-400 text-sm">All plans renew automatically. Cancel anytime from <Link to="/dashboard/subscriptions" className="text-gold-400 hover:text-gold-300 underline underline-offset-2">My Subscriptions</Link>.</p>
+          <p className="text-stone-400 text-sm">All plans renew on the 1st of each month. Cancel anytime from <Link to="/dashboard/subscriptions" className="text-gold-400 hover:text-gold-300 underline underline-offset-2">My Subscriptions</Link>.</p>
           <p className="text-stone-600 text-xs">Payments processed securely by Stripe. We never store your card details.</p>
         </div>
       </div>
