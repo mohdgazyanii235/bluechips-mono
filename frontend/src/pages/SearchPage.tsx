@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { Helmet } from 'react-helmet-async'
 import { Layout } from '@/components/layout/Layout'
+import { EscortCard } from '@/components/escort/EscortCard'
 import { EscortGrid } from '@/components/escort/EscortGrid'
 import { FilterPanel } from '@/components/search/FilterPanel'
 import { Button } from '@/components/ui/Button'
 import { useEscorts } from '@/hooks/useEscorts'
-import type { SearchFilters } from '@/types/escort'
-import { ChevronLeft, ChevronRight, BadgeCheck } from 'lucide-react'
+import type { EscortCard as EscortCardType, SearchFilters } from '@/types/escort'
+import { ChevronLeft, ChevronRight, BadgeCheck, Crown } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { slugToTitle } from '@/utils/formatters'
 
@@ -31,6 +32,11 @@ export function SearchPage() {
     setFilters({ ...newFilters, page: 1 })
   }
 
+  // Split Elite (featured) from regular listings
+  const allItems: EscortCardType[] = data?.items ?? []
+  const eliteItems = allItems.filter(e => e.subscription_tier === 'elite')
+  const regularItems = allItems.filter(e => e.subscription_tier !== 'elite')
+
   return (
     <Layout>
       <Helmet>
@@ -49,7 +55,7 @@ export function SearchPage() {
           )}
         </div>
 
-        {/* Blue Tick nudge — hidden once the filter is active */}
+        {/* Blue Tick nudge */}
         {!filters.blue_tick_only && (
           <div className="flex items-center gap-3 p-4 rounded-xl bg-blue-950/30 border border-blue-500/15">
             <BadgeCheck className="w-5 h-5 text-blue-400 shrink-0" />
@@ -69,9 +75,38 @@ export function SearchPage() {
         {/* Filters */}
         <FilterPanel filters={filters} onChange={handleFilterChange} />
 
-        {/* Results */}
+        {/* ── Elite Featured Listings ─────────────────────────────────────── */}
+        {isLoading ? null : eliteItems.length > 0 && (
+          <section className="space-y-4">
+            {/* Featured header — styled like Rightmove's "Featured Properties" */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/25">
+                <Crown className="w-4 h-4 text-purple-400" />
+                <span className="text-purple-300 text-sm font-semibold tracking-wide">Elite Featured Companions</span>
+              </div>
+              <div className="flex-1 h-px bg-purple-500/15" />
+              <span className="text-stone-600 text-xs">{eliteItems.length} listing{eliteItems.length !== 1 ? 's' : ''}</span>
+            </div>
+
+            {/* Elite grid — larger cards to stand out */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 p-4 rounded-2xl bg-purple-950/10 border border-purple-500/10">
+              {eliteItems.map((escort, i) => (
+                <EscortCard key={escort.id} escort={escort} index={i} featured />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ── Regular Listings ────────────────────────────────────────────── */}
+        {!isLoading && eliteItems.length > 0 && regularItems.length > 0 && (
+          <div className="flex items-center gap-3 pt-2">
+            <span className="text-stone-600 text-xs font-medium uppercase tracking-wider">All Companions</span>
+            <div className="flex-1 h-px bg-surface-border" />
+          </div>
+        )}
+
         <EscortGrid
-          escorts={data?.items ?? []}
+          escorts={isLoading ? [] : regularItems}
           loading={isLoading}
           skeletonCount={24}
         />

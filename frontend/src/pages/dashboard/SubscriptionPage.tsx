@@ -32,6 +32,15 @@ interface Pricing {
   blue_tick_monthly_pence: number
 }
 
+const FREE_FEATURES = [
+  { text: '3 photos', included: true },
+  { text: 'Searchable profile listing', included: true },
+  { text: 'Contact details displayed', included: true },
+  { text: '1hr customer support', included: true },
+  { text: 'Identity verification', included: false },
+  { text: 'Account suspension protection', included: false },
+]
+
 const PLAN_META = [
   {
     id: 'essential',
@@ -41,10 +50,10 @@ const PLAN_META = [
     annualKey: 'essential_annual_pence' as keyof Pricing,
     features: [
       'Up to 8 photos',
-      'Identity verification badge',
       'Borough search placement',
       '"Available now" indicator',
-      'Blue Tick add-on available',
+      'Blue Tick add-on (after ID verification)',
+      '24hr priority support',
     ],
   },
   {
@@ -55,9 +64,9 @@ const PLAN_META = [
     monthlyKey: 'premium_monthly_pence' as keyof Pricing,
     annualKey: 'premium_annual_pence' as keyof Pricing,
     features: [
-      'Up to 50 photos',
-      'Featured search placement',
-      'Blue Tick included free',
+      'Up to 15 photos',
+      'Priority search placement',
+      'Blue Tick included free (auto on ID verify)',
       'STD tested badge',
       'Everything in Essential',
     ],
@@ -69,22 +78,22 @@ const PLAN_META = [
     monthlyKey: 'elite_monthly_pence' as keyof Pricing,
     annualKey: 'elite_annual_pence' as keyof Pricing,
     features: [
-      'Homepage rotation',
-      'Top of all search results',
-      'Dedicated "Elite" badge',
-      'Blue Tick included free',
+      'Up to 50 photos',
+      'Top of all search results (featured section)',
+      'Purple Tick badge (Elite exclusive)',
+      'Blog posts (coming soon)',
       'Everything in Premium',
     ],
   },
 ]
 
 const DEFAULT_PRICING: Pricing = {
-  essential_monthly_pence: 1299,
-  essential_annual_pence: 12990,
-  premium_monthly_pence: 1899,
-  premium_annual_pence: 18990,
-  elite_monthly_pence: 2399,
-  elite_annual_pence: 23990,
+  essential_monthly_pence: 2499,
+  essential_annual_pence: 24990,
+  premium_monthly_pence: 4999,
+  premium_annual_pence: 49990,
+  elite_monthly_pence: 8999,
+  elite_annual_pence: 89990,
   blue_tick_setup_pence: 1000,
   blue_tick_monthly_pence: 399,
 }
@@ -281,7 +290,6 @@ export function SubscriptionPage() {
 
   const currentTier = escort.subscription_tier
   const isPaid = currentTier !== 'free'
-  const isPremiumOrElite = currentTier === 'premium' || currentTier === 'elite'
   const hasActiveStripeSubscription = !!(escort as any).stripe_subscription_id
 
   const handleSubscribeClick = async (tier: string, planName: string) => {
@@ -449,8 +457,49 @@ export function SubscriptionPage() {
             </div>
           </div>
 
-          {/* Plans grid */}
-          <div className="grid sm:grid-cols-3 gap-5">
+          {/* Plans grid — Free + 3 paid tiers */}
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            {/* Free tier card */}
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={cn(
+                'card-surface rounded-2xl p-6 space-y-6 relative',
+                currentTier === 'free' && 'border-emerald-500/40'
+              )}
+            >
+              {currentTier === 'free' && (
+                <div className="absolute -top-3 right-4 bg-emerald-500 text-white text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wide">
+                  Active
+                </div>
+              )}
+              <div className="space-y-1">
+                <div className="w-9 h-9 rounded-lg bg-stone-800 border border-stone-700 flex items-center justify-center mb-3">
+                  <Sparkles className="w-4 h-4 text-stone-400" />
+                </div>
+                <h3 className="font-serif text-xl text-ivory-100">Free</h3>
+                <div className="flex items-baseline gap-1">
+                  <span className="font-serif text-3xl text-stone-300">£0</span>
+                  <span className="text-stone-500 text-sm">/month</span>
+                </div>
+              </div>
+              <ul className="space-y-2.5">
+                {FREE_FEATURES.map((f) => (
+                  <li key={f.text} className="flex items-start gap-2.5 text-sm">
+                    {f.included
+                      ? <Check className="w-4 h-4 text-stone-400 shrink-0 mt-0.5" />
+                      : <X className="w-4 h-4 text-stone-700 shrink-0 mt-0.5" />
+                    }
+                    <span className={f.included ? 'text-stone-400' : 'text-stone-600'}>{f.text}</span>
+                  </li>
+                ))}
+              </ul>
+              {currentTier === 'free'
+                ? <Button variant="ghost" fullWidth disabled>Current Plan</Button>
+                : <p className="text-stone-600 text-xs text-center pt-2">Your default plan</p>
+              }
+            </motion.div>
+
             {PLAN_META.map((plan, i) => {
               const isActive = plan.id === currentTier
               const Icon = plan.icon
@@ -592,125 +641,183 @@ export function SubscriptionPage() {
           </section>
         )}
 
-        {/* Blue Tick section */}
+        {/* Verification Badge section */}
         <section className="space-y-4">
-          <div>
-            <h2 className="font-serif text-2xl text-ivory-100">Blue Tick</h2>
-            <p className="text-stone-500 text-sm mt-1">
-              {isPremiumOrElite
-                ? 'Included free with your plan — activates automatically when your identity is approved.'
-                : currentTier === 'essential'
-                  ? 'Optional add-on for Essential subscribers. Requires identity verification first.'
-                  : 'Requires an active paid subscription.'}
-            </p>
-          </div>
-
-          {isPremiumOrElite ? (
-            <div className="card-surface rounded-2xl p-6 space-y-5 max-w-lg">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h3 className="font-serif text-lg text-ivory-100 flex items-center gap-2">
-                    Blue Tick
-                    {escort.blue_tick_active && (
-                      <span className="bg-blue-500/10 text-blue-400 border border-blue-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full">ACTIVE</span>
-                    )}
-                  </h3>
-                  <p className="text-stone-500 text-sm mt-1">Prove your photos are genuinely yours. Included free with your plan.</p>
-                </div>
-                <div className="text-right shrink-0">
-                  <p className="text-emerald-400 font-semibold text-sm">Free</p>
-                  <p className="text-stone-600 text-xs">with your plan</p>
-                </div>
+          {currentTier === 'elite' ? (
+            <>
+              <div>
+                <h2 className="font-serif text-2xl text-ivory-100">Purple Tick</h2>
+                <p className="text-stone-500 text-sm mt-1">
+                  Exclusive to Elite subscribers — replaces the Blue Tick with a premium purple badge.
+                </p>
               </div>
-              <ul className="space-y-2">
-                {[
-                  'Blue tick badge on your profile',
-                  'Appears in "Blue Tick verified" filter',
-                  'Reviewed by our team within 1 hour',
-                  'Included with all Premium & Elite plans',
-                ].map((f) => (
-                  <li key={f} className="flex items-center gap-2 text-sm text-stone-300">
-                    <Check className="w-4 h-4 text-blue-400 shrink-0" />
-                    {f}
-                  </li>
-                ))}
-              </ul>
-              {escort.blue_tick_active ? (
-                <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm">
-                  <CheckCircle className="w-4 h-4 shrink-0" />
-                  Blue Tick is active on your profile.
-                </div>
-              ) : escort.verification_level >= 2 ? (
-                <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-900/15 border border-amber-800/30 text-amber-400 text-xs">
-                  <Clock className="w-4 h-4 shrink-0" />
-                  Identity verified — Blue Tick will activate once our team completes the review.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <p className="text-amber-500 text-xs p-3 rounded-lg bg-amber-900/20 border border-amber-800/30">
-                    Submit identity verification — your Blue Tick will activate automatically when approved.
-                  </p>
-                  <Link to="/dashboard/verify">
-                    <Button variant="outline-gold" fullWidth size="sm">Verify Identity to Activate →</Button>
-                  </Link>
-                </div>
-              )}
-            </div>
-          ) : currentTier === 'essential' ? (
-            <div className="card-surface rounded-2xl p-6 space-y-5 max-w-lg">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h3 className="font-serif text-lg text-ivory-100 flex items-center gap-2">
-                    Blue Tick
-                    {escort.blue_tick_active && (
-                      <span className="bg-blue-500/10 text-blue-400 border border-blue-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full">ACTIVE</span>
-                    )}
-                    {!escort.blue_tick_active && (escort as any).blue_tick_stripe_subscription_id && (
-                      <span className="bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full">PENDING REVIEW</span>
-                    )}
-                  </h3>
-                  <p className="text-stone-500 text-sm mt-1">Prove your photos are genuinely yours. Hugely increases client trust and bookings.</p>
-                </div>
-                <div className="text-right shrink-0">
-                  <p className="text-gold-400 font-semibold">{fmt(pricing.blue_tick_setup_pence)} setup</p>
-                  <p className="text-stone-500 text-xs">then {fmt(pricing.blue_tick_monthly_pence)}/month</p>
-                </div>
-              </div>
-              <ul className="space-y-2">
-                {['Blue tick badge on your profile', 'Appears in "Blue Tick verified" filter', 'Reviewed by our team within 1 hour', 'Cancel anytime'].map((f) => (
-                  <li key={f} className="flex items-center gap-2 text-sm text-stone-300">
-                    <Check className="w-4 h-4 text-blue-400 shrink-0" />
-                    {f}
-                  </li>
-                ))}
-              </ul>
-              {(escort as any).blue_tick_stripe_subscription_id ? (
-                <Link to="/dashboard/subscriptions">
-                  <Button variant="ghost" fullWidth>
-                    {escort.blue_tick_active ? 'Manage Blue Tick' : 'View Blue Tick Status →'}
-                  </Button>
-                </Link>
-              ) : escort.verification_level < 2 ? (
-                <div className="space-y-2">
-                  <div className="p-3 rounded-lg bg-amber-900/20 border border-amber-800/30 text-amber-500 text-xs">
-                    Complete identity verification first before applying for the Blue Tick
+              <div className="card-surface rounded-2xl p-6 space-y-5 max-w-lg border-purple-500/20">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h3 className="font-serif text-lg text-ivory-100 flex items-center gap-2">
+                      Purple Tick
+                      {escort.verification_level >= 2 && (
+                        <span className="bg-purple-500/10 text-purple-400 border border-purple-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full">ACTIVE</span>
+                      )}
+                    </h3>
+                    <p className="text-stone-500 text-sm mt-1">Elite-exclusive badge. Activates automatically when your identity is verified.</p>
                   </div>
-                  <Link to="/dashboard/verify">
-                    <Button variant="outline-gold" fullWidth size="sm">Go to Verification →</Button>
-                  </Link>
+                  <div className="text-right shrink-0">
+                    <p className="text-purple-400 font-semibold text-sm">Free</p>
+                    <p className="text-stone-600 text-xs">Elite exclusive</p>
+                  </div>
+                </div>
+                <ul className="space-y-2">
+                  {[
+                    'Purple tick badge — Elite exclusive',
+                    'Appears in "Verified" filter',
+                    'Reviewed by our team within 1 hour',
+                    'Included with your Elite plan',
+                  ].map((f) => (
+                    <li key={f} className="flex items-center gap-2 text-sm text-stone-300">
+                      <Check className="w-4 h-4 text-purple-400 shrink-0" />
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+                {escort.verification_level >= 2 ? (
+                  <div className="flex items-center gap-2 p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400 text-sm">
+                    <CheckCircle className="w-4 h-4 shrink-0" />
+                    Purple Tick is active on your profile.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-amber-500 text-xs p-3 rounded-lg bg-amber-900/20 border border-amber-800/30">
+                      Submit identity verification — your Purple Tick will activate automatically when approved.
+                    </p>
+                    <Link to="/dashboard/verify">
+                      <Button variant="outline-gold" fullWidth size="sm">Verify Identity to Activate →</Button>
+                    </Link>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <h2 className="font-serif text-2xl text-ivory-100">Blue Tick</h2>
+                <p className="text-stone-500 text-sm mt-1">
+                  {currentTier === 'premium'
+                    ? 'Included free with your plan — activates automatically when your identity is approved.'
+                    : currentTier === 'essential'
+                      ? 'Optional add-on for Essential subscribers. Requires identity verification first.'
+                      : 'Requires an active paid subscription.'}
+                </p>
+              </div>
+
+              {currentTier === 'premium' ? (
+                <div className="card-surface rounded-2xl p-6 space-y-5 max-w-lg">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 className="font-serif text-lg text-ivory-100 flex items-center gap-2">
+                        Blue Tick
+                        {escort.blue_tick_active && (
+                          <span className="bg-blue-500/10 text-blue-400 border border-blue-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full">ACTIVE</span>
+                        )}
+                      </h3>
+                      <p className="text-stone-500 text-sm mt-1">Prove your photos are genuinely yours. Included free with Premium.</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-emerald-400 font-semibold text-sm">Free</p>
+                      <p className="text-stone-600 text-xs">with Premium</p>
+                    </div>
+                  </div>
+                  <ul className="space-y-2">
+                    {[
+                      'Blue tick badge on your profile',
+                      'Appears in "Blue Tick verified" filter',
+                      'Reviewed by our team within 1 hour',
+                      'Included with Premium plan',
+                    ].map((f) => (
+                      <li key={f} className="flex items-center gap-2 text-sm text-stone-300">
+                        <Check className="w-4 h-4 text-blue-400 shrink-0" />
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                  {escort.blue_tick_active ? (
+                    <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm">
+                      <CheckCircle className="w-4 h-4 shrink-0" />
+                      Blue Tick is active on your profile.
+                    </div>
+                  ) : escort.verification_level >= 2 ? (
+                    <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-900/15 border border-amber-800/30 text-amber-400 text-xs">
+                      <Clock className="w-4 h-4 shrink-0" />
+                      Identity verified — Blue Tick will activate once our team completes the review.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-amber-500 text-xs p-3 rounded-lg bg-amber-900/20 border border-amber-800/30">
+                        Submit identity verification — your Blue Tick will activate automatically when approved.
+                      </p>
+                      <Link to="/dashboard/verify">
+                        <Button variant="outline-gold" fullWidth size="sm">Verify Identity to Activate →</Button>
+                      </Link>
+                    </div>
+                  )}
+                </div>
+              ) : currentTier === 'essential' ? (
+                <div className="card-surface rounded-2xl p-6 space-y-5 max-w-lg">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 className="font-serif text-lg text-ivory-100 flex items-center gap-2">
+                        Blue Tick
+                        {escort.blue_tick_active && (
+                          <span className="bg-blue-500/10 text-blue-400 border border-blue-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full">ACTIVE</span>
+                        )}
+                        {!escort.blue_tick_active && (escort as any).blue_tick_stripe_subscription_id && (
+                          <span className="bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full">PENDING REVIEW</span>
+                        )}
+                      </h3>
+                      <p className="text-stone-500 text-sm mt-1">Prove your photos are genuinely yours. Hugely increases client trust and bookings.</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-gold-400 font-semibold">{fmt(pricing.blue_tick_setup_pence)} setup</p>
+                      <p className="text-stone-500 text-xs">then {fmt(pricing.blue_tick_monthly_pence)}/month</p>
+                    </div>
+                  </div>
+                  <ul className="space-y-2">
+                    {['Blue tick badge on your profile', 'Appears in "Blue Tick verified" filter', 'Reviewed by our team within 1 hour', 'Cancel anytime'].map((f) => (
+                      <li key={f} className="flex items-center gap-2 text-sm text-stone-300">
+                        <Check className="w-4 h-4 text-blue-400 shrink-0" />
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                  {(escort as any).blue_tick_stripe_subscription_id ? (
+                    <Link to="/dashboard/subscriptions">
+                      <Button variant="ghost" fullWidth>
+                        {escort.blue_tick_active ? 'Manage Blue Tick' : 'View Blue Tick Status →'}
+                      </Button>
+                    </Link>
+                  ) : escort.verification_level < 2 ? (
+                    <div className="space-y-2">
+                      <div className="p-3 rounded-lg bg-amber-900/20 border border-amber-800/30 text-amber-500 text-xs">
+                        Complete identity verification first before applying for Blue Tick
+                      </div>
+                      <Link to="/dashboard/verify">
+                        <Button variant="outline-gold" fullWidth size="sm">Go to Identity Verification →</Button>
+                      </Link>
+                    </div>
+                  ) : (
+                    <Link to="/dashboard/verify">
+                      <Button variant="gold" fullWidth>Apply for Blue Tick — {fmt(pricing.blue_tick_setup_pence)} + {fmt(pricing.blue_tick_monthly_pence)}/mo</Button>
+                    </Link>
+                  )}
                 </div>
               ) : (
-                <Link to="/dashboard/verify">
-                  <Button variant="gold" fullWidth>Apply for Blue Tick — {fmt(pricing.blue_tick_setup_pence)} + {fmt(pricing.blue_tick_monthly_pence)}/mo</Button>
-                </Link>
+                <div className="card-surface rounded-2xl p-6 max-w-lg">
+                  <p className="text-stone-500 text-sm text-center">
+                    Subscribe to a paid plan to unlock the Blue Tick add-on.
+                  </p>
+                </div>
               )}
-            </div>
-          ) : (
-            <div className="card-surface rounded-2xl p-6 max-w-lg">
-              <p className="text-stone-500 text-sm text-center">
-                Subscribe to a paid plan to unlock the Blue Tick.
-              </p>
-            </div>
+            </>
           )}
         </section>
 

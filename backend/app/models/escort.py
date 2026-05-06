@@ -141,7 +141,7 @@ class Escort(Base):
 
     @property
     def photo_limit(self) -> int:
-        limits = {"free": 3, "essential": 8, "premium": 50, "elite": 50}
+        limits = {"free": 3, "essential": 8, "premium": 15, "elite": 50}
         return limits.get(self.subscription_tier, 3)
 
     def __repr__(self) -> str:

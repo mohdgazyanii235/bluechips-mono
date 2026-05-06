@@ -432,6 +432,16 @@ async def create_blue_tick_checkout(
             status_code=400,
             detail="Blue Tick is included free with your Premium or Elite plan. Complete identity verification to activate it — no extra charge."
         )
+    if escort.subscription_tier == "free":
+        raise HTTPException(
+            status_code=400,
+            detail="An active paid subscription is required to apply for Blue Tick."
+        )
+    if escort.verification_level < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Identity verification must be completed before applying for Blue Tick."
+        )
     if escort.blue_tick_stripe_subscription_id:
         raise HTTPException(status_code=400, detail="You already have an active Blue Tick subscription")
 

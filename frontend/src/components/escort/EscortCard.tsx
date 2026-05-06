@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { MapPin, Star } from 'lucide-react'
+import { MapPin, Crown } from 'lucide-react'
 import type { EscortCard as EscortCardType } from '@/types/escort'
 import { VerificationBadge } from './VerificationBadge'
 import { ServiceTags } from './ServiceTags'
@@ -10,13 +10,14 @@ import { cn } from '@/utils/cn'
 interface EscortCardProps {
   escort: EscortCardType
   index?: number
+  featured?: boolean
 }
 
 const PLACEHOLDER_IMG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='400' viewBox='0 0 300 400'%3E%3Crect width='300' height='400' fill='%23161616'/%3E%3Ctext x='150' y='200' font-family='Georgia' font-size='48' fill='%23C9A84C' text-anchor='middle' dominant-baseline='middle'%3EB%3C/text%3E%3C/svg%3E"
 
-export function EscortCard({ escort, index = 0 }: EscortCardProps) {
+export function EscortCard({ escort, index = 0, featured }: EscortCardProps) {
   const isElite = escort.subscription_tier === 'elite'
-  const isPremium = escort.subscription_tier === 'premium' || isElite
+  const isPremiumOrElite = escort.subscription_tier === 'premium' || isElite
 
   return (
     <motion.div
@@ -27,9 +28,11 @@ export function EscortCard({ escort, index = 0 }: EscortCardProps) {
       <Link to={`/escorts/${escort.slug}`} className="block group">
         <div className={cn(
           'relative overflow-hidden rounded-xl transition-all duration-300',
-          'border border-surface-border bg-surface-card',
-          'group-hover:border-gold-400/30 group-hover:shadow-card-hover group-hover:-translate-y-0.5',
-          isElite && 'border-gold-400/20 shadow-gold'
+          'border bg-surface-card',
+          'group-hover:shadow-card-hover group-hover:-translate-y-0.5',
+          isElite
+            ? 'border-purple-500/30 shadow-[0_0_15px_rgba(168,85,247,0.1)] group-hover:border-purple-400/50'
+            : 'border-surface-border group-hover:border-gold-400/30'
         )}>
           {/* Photo */}
           <div className="relative aspect-[3/4] overflow-hidden bg-surface">
@@ -59,12 +62,15 @@ export function EscortCard({ escort, index = 0 }: EscortCardProps) {
                 )}
               </div>
               <div className="flex flex-col items-end gap-1.5">
+                {/* Elite tier badge — always shown for Elite escorts */}
                 {isElite && (
-                  <span className="bg-gold-400/90 backdrop-blur-sm text-black text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide">
+                  <span className="inline-flex items-center gap-1 bg-purple-600/80 backdrop-blur-sm text-purple-100 text-[10px] font-semibold px-2 py-0.5 rounded-full">
+                    <Crown className="w-2.5 h-2.5" />
                     Elite
                   </span>
                 )}
-                {escort.std_tested && (
+                {/* STD Tested — only Premium & Elite (already filtered server-side, kept as guard) */}
+                {isPremiumOrElite && escort.std_tested && (
                   <span className="bg-teal-500/80 backdrop-blur-sm text-white text-[10px] font-medium px-2 py-0.5 rounded-full">
                     STD Tested
                   </span>
@@ -85,16 +91,18 @@ export function EscortCard({ escort, index = 0 }: EscortCardProps) {
                     {escort.nationality}
                   </p>
                 </div>
-                {escort.verification_level >= 2 && (
-                  <VerificationBadge level={escort.verification_level} size="sm" />
-                )}
+                <VerificationBadge
+                  level={escort.verification_level}
+                  blue_tick_active={escort.blue_tick_active}
+                  subscription_tier={escort.subscription_tier}
+                  size="sm"
+                />
               </div>
             </div>
           </div>
 
           {/* Card Body */}
           <div className="p-3 space-y-2.5">
-            {/* Location + Rate */}
             <div className="flex items-center justify-between">
               {escort.borough_name && (
                 <span className="flex items-center gap-1 text-stone-500 text-xs">
@@ -109,7 +117,6 @@ export function EscortCard({ escort, index = 0 }: EscortCardProps) {
               )}
             </div>
 
-            {/* Service tags */}
             {escort.service_tags.length > 0 && (
               <ServiceTags tags={escort.service_tags} max={3} size="sm" />
             )}

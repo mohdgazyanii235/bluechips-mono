@@ -195,10 +195,13 @@ async def approve_verification(
 
     escort = v.escort
 
-    if v.level == 2 and escort.subscription_tier in ["premium", "elite"]:
-        # Premium/Elite: identity approval automatically grants Blue Tick too (included free)
-        escort.verification_level = max(escort.verification_level, 3)
+    if v.level == 2 and escort.subscription_tier == "premium":
+        # Premium: identity approval automatically grants Blue Tick (included free)
+        escort.verification_level = max(escort.verification_level, 2)
         escort.blue_tick_active = True
+    elif v.level == 2 and escort.subscription_tier == "elite":
+        # Elite: identity approval grants Purple Tick (shown via tier + verification_level in UI)
+        escort.verification_level = max(escort.verification_level, 2)
     elif v.level == 3:
         escort.verification_level = max(escort.verification_level, 3)
         escort.blue_tick_active = True

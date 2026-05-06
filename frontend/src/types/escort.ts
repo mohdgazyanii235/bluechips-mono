@@ -11,6 +11,7 @@ export interface EscortCard {
   rate_1hour: number | null
   subscription_tier: 'free' | 'essential' | 'premium' | 'elite'
   verification_level: 0 | 1 | 2 | 3
+  blue_tick_active: boolean
   available_now: boolean
   std_tested: boolean
   primary_photo_url: string | null

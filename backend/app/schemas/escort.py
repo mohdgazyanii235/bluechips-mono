@@ -31,6 +31,7 @@ class EscortCardOut(BaseModel):
     rate_1hour: Optional[int]
     subscription_tier: str
     verification_level: int
+    blue_tick_active: bool = False
     available_now: bool
     std_tested: bool
     primary_photo_url: Optional[str]

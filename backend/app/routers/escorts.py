@@ -26,6 +26,8 @@ ALLOWED_SERVICE_TAGS = {
 
 
 def _build_card(escort: Escort) -> EscortCardOut:
+    # STD-tested badge is a Premium/Elite feature only
+    show_std = escort.std_tested and escort.subscription_tier in ("premium", "elite")
     return EscortCardOut(
         id=escort.id,
         stage_name=escort.stage_name,
@@ -39,8 +41,9 @@ def _build_card(escort: Escort) -> EscortCardOut:
         rate_1hour=escort.rate_1hour,
         subscription_tier=escort.subscription_tier,
         verification_level=escort.verification_level,
+        blue_tick_active=escort.blue_tick_active,
         available_now=escort.available_now,
-        std_tested=escort.std_tested,
+        std_tested=show_std,
         primary_photo_url=escort.primary_photo_url,
         service_tags=[s.tag for s in escort.services[:4]],
         profile_type=escort.profile_type,
@@ -48,6 +51,7 @@ def _build_card(escort: Escort) -> EscortCardOut:
 
 
 def _build_profile(escort: Escort) -> EscortProfileOut:
+    show_std = escort.std_tested and escort.subscription_tier in ("premium", "elite")
     return EscortProfileOut(
         id=escort.id,
         stage_name=escort.stage_name,
@@ -71,8 +75,8 @@ def _build_profile(escort: Escort) -> EscortProfileOut:
         about_me=escort.about_me,
         languages=escort.languages,
         booking_notice=escort.booking_notice,
-        std_tested=escort.std_tested,
-        std_tested_date=escort.std_tested_date,
+        std_tested=show_std,
+        std_tested_date=escort.std_tested_date if show_std else None,
         subscription_tier=escort.subscription_tier,
         verification_level=escort.verification_level,
         blue_tick_active=escort.blue_tick_active,
