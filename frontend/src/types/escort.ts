@@ -54,6 +54,7 @@ export interface EscortProfile {
   std_tested_date: string | null
   subscription_tier: string
   verification_level: number
+  blue_tick_active: boolean
   available_now: boolean
   profile_views: number
   service_tags: string[]

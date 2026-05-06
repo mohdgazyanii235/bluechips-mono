@@ -222,7 +222,12 @@ export function EscortProfilePage() {
                 <div className="flex items-start justify-between">
                   <h1 className="font-serif text-3xl text-ivory-100">{escort.stage_name}</h1>
                   <div className="flex gap-1.5">
-                    <VerificationBadge level={escort.verification_level} size="sm" />
+                    <VerificationBadge
+                      level={escort.verification_level}
+                      blue_tick_active={escort.blue_tick_active}
+                      subscription_tier={escort.subscription_tier}
+                      size="sm"
+                    />
                   </div>
                 </div>
 
@@ -243,7 +248,13 @@ export function EscortProfilePage() {
 
               {/* Badges row */}
               <div className="flex flex-wrap gap-2">
-                <VerificationBadge level={escort.verification_level} size="md" showLabel />
+                <VerificationBadge
+                  level={escort.verification_level}
+                  blue_tick_active={escort.blue_tick_active}
+                  subscription_tier={escort.subscription_tier}
+                  size="md"
+                  showLabel
+                />
                 {escort.std_tested && (
                   <Badge variant="std">
                     <Activity className="w-3.5 h-3.5" />
@@ -257,15 +268,22 @@ export function EscortProfilePage() {
                 )}
               </div>
 
-              {/* Blue Tick explainer */}
-              {escort.verification_level >= 3 && (
+              {/* Verification explainer */}
+              {escort.subscription_tier === 'elite' && escort.verification_level >= 2 ? (
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-purple-950/40 border border-purple-500/20">
+                  <Shield className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+                  <p className="text-purple-300/80 text-xs leading-relaxed">
+                    <span className="font-medium text-purple-300">Elite — Identity independently verified</span> — this companion's government ID was reviewed by the Bluechips London team. Who you see is who you'll meet.
+                  </p>
+                </div>
+              ) : (escort.blue_tick_active || escort.verification_level >= 3) ? (
                 <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-950/40 border border-blue-500/20">
                   <Shield className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                   <p className="text-blue-300/80 text-xs leading-relaxed">
                     <span className="font-medium text-blue-300">Identity & photos independently verified</span> — this companion's government ID and profile photos were reviewed by the Bluechips London team. Who you see is who you'll meet.
                   </p>
                 </div>
-              )}
+              ) : null}
 
               {/* Views */}
               <p className="text-stone-700 text-xs flex items-center gap-1">
