@@ -506,7 +506,7 @@ async def seed_demo_escorts():
             eye = rng.choice(_EYE_COLOURS)
             availability = rng.choices(_AVAILABILITY, weights=_AVAIL_WEIGHTS, k=1)[0]
             languages = rng.choice(_LANGUAGES_POOL)
-            about = rng.choice(_ABOUT_TEMPLATES).format(name=name)
+            about = rng.choice(_ABOUT_TEMPLATES).format(name=name)[:600]
             booking_notice = rng.choice(_BOOKING_NOTICES)
             available_now = rng.random() < 0.4
 
