@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Helmet } from 'react-helmet-async'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
-import { ChevronLeft, Check, Zap, Star, Crown, CheckCircle, X, Sparkles, Clock, Tag, AlertTriangle, ArrowRight } from 'lucide-react'
+import { ChevronLeft, Check, Zap, Star, Crown, CheckCircle, X, Sparkles, Clock, Tag, AlertTriangle, ArrowRight, Camera, ShieldCheck, BadgeCheck, PartyPopper } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { DashboardLayout } from '@/components/layout/Layout'
@@ -64,7 +64,7 @@ const PLAN_META = [
     monthlyKey: 'premium_monthly_pence' as keyof Pricing,
     annualKey: 'premium_annual_pence' as keyof Pricing,
     features: [
-      'Up to 15 photos',
+      'Up to 50 photos',
       'Priority search placement',
       'Blue Tick included free (auto on ID verify)',
       'STD tested badge',
@@ -102,7 +102,118 @@ function fmt(pence: number) {
   return `£${(pence / 100).toFixed(2)}`
 }
 
+const PHOTO_LIMITS: Record<string, number> = { free: 3, essential: 8, premium: 50, elite: 50 }
+
+const TIER_PERKS: Record<string, { icon: React.ElementType; text: string }[]> = {
+  essential: [
+    { icon: Camera, text: 'Up to 8 photos on your profile' },
+    { icon: CheckCircle, text: 'Borough search placement' },
+    { icon: BadgeCheck, text: '"Available Now" indicator visible to clients' },
+    { icon: ShieldCheck, text: 'Identity verification unlocked' },
+  ],
+  premium: [
+    { icon: Camera, text: 'Up to 50 photos on your profile' },
+    { icon: Star, text: 'Priority placement in search results' },
+    { icon: BadgeCheck, text: 'Blue Tick — automatically granted on ID verify' },
+    { icon: ShieldCheck, text: 'STD tested badge visible to clients' },
+  ],
+  elite: [
+    { icon: Camera, text: 'Up to 50 photos on your profile' },
+    { icon: Crown, text: 'Top of every search result — featured section' },
+    { icon: BadgeCheck, text: 'Purple Tick badge — Elite exclusive' },
+    { icon: Star, text: 'Blog posts & editorial features (coming soon)' },
+  ],
+}
+
 type Billing = 'monthly' | 'annual'
+
+// ---------------------------------------------------------------------------
+// Post-payment success view
+// ---------------------------------------------------------------------------
+
+interface SuccessViewProps {
+  tier: string
+  onDismiss: () => void
+}
+
+function SuccessView({ tier, onDismiss }: SuccessViewProps) {
+  const tierName = tier.charAt(0).toUpperCase() + tier.slice(1)
+  const perks = TIER_PERKS[tier] ?? []
+  const isElite = tier === 'elite'
+  const isPremium = tier === 'premium'
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.92, y: 24 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ type: 'spring', damping: 20, stiffness: 200 }}
+        className={cn(
+          'relative bg-stone-950 border rounded-3xl p-8 max-w-md w-full shadow-2xl space-y-6 text-center',
+          isElite ? 'border-purple-500/40' : isPremium ? 'border-gold-400/40' : 'border-emerald-500/30'
+        )}
+      >
+        {/* Icon */}
+        <div className={cn(
+          'w-20 h-20 rounded-full mx-auto flex items-center justify-center',
+          isElite ? 'bg-purple-500/15 border border-purple-500/30' : 'bg-gold-400/10 border border-gold-400/30'
+        )}>
+          {isElite ? <Crown className="w-10 h-10 text-purple-400" /> : <PartyPopper className="w-10 h-10 text-gold-400" />}
+        </div>
+
+        {/* Heading */}
+        <div className="space-y-2">
+          <h2 className="font-serif text-3xl text-ivory-100">Welcome to {tierName}!</h2>
+          <p className="text-stone-400 text-sm">Your subscription is now active. Here's what you've just unlocked:</p>
+        </div>
+
+        {/* Perks */}
+        {perks.length > 0 && (
+          <ul className="space-y-3 text-left">
+            {perks.map(({ icon: Icon, text }) => (
+              <li key={text} className="flex items-start gap-3">
+                <div className={cn(
+                  'w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5',
+                  isElite ? 'bg-purple-500/15' : 'bg-gold-400/10'
+                )}>
+                  <Icon className={cn('w-3.5 h-3.5', isElite ? 'text-purple-400' : 'text-gold-400')} />
+                </div>
+                <span className="text-stone-300 text-sm">{text}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {/* Next step hint */}
+        <div className="p-3 rounded-xl bg-stone-900 border border-stone-800 text-left space-y-1">
+          <p className="text-ivory-200 text-sm font-medium">Next step</p>
+          <p className="text-stone-400 text-xs">
+            Submit your identity documents to activate your verification badge — reviewed within 1 hour.
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex flex-col gap-3">
+          <Link to="/dashboard/verify" onClick={onDismiss}>
+            <Button variant={isElite ? 'outline-gold' : 'gold'} fullWidth>
+              Verify My Identity →
+            </Button>
+          </Link>
+          <button
+            onClick={onDismiss}
+            className="text-stone-500 hover:text-stone-300 text-sm transition-colors"
+          >
+            I'll do this later
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Confirmation modal
@@ -114,11 +225,14 @@ interface PlanChangeModalProps {
   onConfirm: () => void
   onCancel: () => void
   loading: boolean
+  currentPhotoCount?: number
 }
 
-function PlanChangeModal({ preview, planName, onConfirm, onCancel, loading }: PlanChangeModalProps) {
+function PlanChangeModal({ preview, planName, onConfirm, onCancel, loading, currentPhotoCount = 0 }: PlanChangeModalProps) {
   const isUpgrade = preview.type === 'upgrade' || preview.type === 'new'
   const isDowngrade = preview.type === 'downgrade'
+  const newPhotoLimit = PHOTO_LIMITS[preview.to_tier] ?? 3
+  const photosOverLimit = isDowngrade ? Math.max(0, currentPhotoCount - newPhotoLimit) : 0
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -200,6 +314,20 @@ function PlanChangeModal({ preview, planName, onConfirm, onCancel, loading }: Pl
                 From that date, you'll be billed <strong className="text-ivory-200">{fmt(preview.then_pence)}/month</strong> for {planName}.
               </p>
             </div>
+            {photosOverLimit > 0 && (
+              <div className="rounded-xl bg-amber-900/20 border border-amber-700/40 p-4 space-y-2">
+                <div className="flex items-center gap-2 text-amber-400">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <p className="text-sm font-medium">Photo limit warning</p>
+                </div>
+                <p className="text-stone-400 text-sm">
+                  You currently have <strong className="text-ivory-200">{currentPhotoCount} photos</strong>, but {planName} only allows <strong className="text-ivory-200">{newPhotoLimit}</strong>.
+                </p>
+                <p className="text-stone-400 text-sm">
+                  Please remove <strong className="text-amber-400">{photosOverLimit} photo{photosOverLimit > 1 ? 's' : ''}</strong> before <strong className="text-ivory-200">{preview.next_billing_date}</strong> to avoid your profile being paused.
+                </p>
+              </div>
+            )}
           </div>
         )}
 
@@ -242,8 +370,9 @@ export function SubscriptionPage() {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [billing, setBilling] = useState<Billing>('monthly')
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const paymentStatus = searchParams.get('payment')
+  const [showSuccess, setShowSuccess] = useState(paymentStatus === 'success')
 
   const [codeInput, setCodeInput] = useState('')
   const [validatingCode, setValidatingCode] = useState(false)
@@ -361,11 +490,23 @@ export function SubscriptionPage() {
     }
   }
 
+  const handleDismissSuccess = () => {
+    setShowSuccess(false)
+    setSearchParams(prev => { prev.delete('payment'); return prev }, { replace: true })
+  }
+
   return (
     <DashboardLayout>
       <Helmet><title>Plans & Billing — Bluechips London</title></Helmet>
 
-      {/* Confirmation modal */}
+      {/* Post-payment success overlay */}
+      <AnimatePresence>
+        {showSuccess && (
+          <SuccessView tier={currentTier} onDismiss={handleDismissSuccess} />
+        )}
+      </AnimatePresence>
+
+      {/* Plan change confirmation modal */}
       <AnimatePresence>
         {pendingChange && (
           <PlanChangeModal
@@ -374,6 +515,7 @@ export function SubscriptionPage() {
             onConfirm={handleConfirm}
             onCancel={() => { if (!confirmLoading) setPendingChange(null) }}
             loading={confirmLoading}
+            currentPhotoCount={escort.photos?.length ?? 0}
           />
         )}
       </AnimatePresence>
@@ -398,18 +540,6 @@ export function SubscriptionPage() {
         </div>
 
         {/* Payment result banners */}
-        {paymentStatus === 'success' && (
-          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
-            className="flex items-center gap-3 p-4 rounded-xl bg-emerald-900/20 border border-emerald-500/30 text-emerald-400">
-            <CheckCircle className="w-5 h-5 shrink-0" />
-            <div>
-              <p className="font-medium text-sm">Payment successful!</p>
-              <p className="text-emerald-600 text-xs mt-0.5">
-                Your subscription is now active. Submit your identity verification to unlock your full profile.
-              </p>
-            </div>
-          </motion.div>
-        )}
         {paymentStatus === 'cancelled' && (
           <div className="flex items-center gap-3 p-4 rounded-xl bg-stone-900/40 border border-stone-700 text-stone-400">
             <X className="w-5 h-5 shrink-0" />

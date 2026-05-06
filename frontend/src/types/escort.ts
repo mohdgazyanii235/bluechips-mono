@@ -121,11 +121,16 @@ export interface SearchFilters {
 }
 
 export const SERVICE_TAGS = [
-  'GFE', 'PSE', 'OWO', 'OWO-CIM', 'Massage', 'Erotic Massage', 'Tantric Massage',
-  'Happy Ending', 'DFK', '69', 'Anal', 'COB', 'Deep Throat', 'Rimming',
-  'BDSM', 'Bondage', 'Domination', 'Submission', 'Fetish', 'Role Play', 'Duo',
-  'Couples Welcome', 'Dinner Date', 'Travel Companion', 'Overnight', 'Watersports',
-  'Toys', 'Striptease', 'Lap Dance', 'Foot Fetish', 'Strapon', 'CBT',
+  'GFE', 'PSE', 'OWO', 'OWO-CIM', 'CIM', 'CIMWS', 'COB', 'CIF',
+  'Massage', 'Erotic Massage', 'Tantric Massage', 'Body Slide', 'Nude Massage',
+  'Happy Ending', 'Hand Relief', 'DFK', '69', 'Anal', 'A-Level',
+  'Deep Throat', 'BBBJ', 'Rimming', 'Squirting',
+  'BDSM', 'Bondage', 'Domination', 'Submission', 'Fetish', 'Role Play',
+  'Tie & Tease', 'S&M', 'Watersports', 'CBT', 'Strapon',
+  'Duo', 'Threesome', 'Couples Welcome',
+  'Dinner Date', 'Travel Companion', 'Overnight',
+  'Striptease', 'Lap Dance', 'Foot Fetish', 'Shower Together',
+  'Toys', 'Party Friendly', 'Webcam',
 ] as const
 
 export const ETHNICITIES = [
@@ -142,7 +147,11 @@ export const BUILD_TYPES = [
 
 export const LANGUAGES = [
   'English', 'Romanian', 'Spanish', 'Russian', 'Polish', 'Portuguese',
-  'Thai', 'Hungarian', 'Italian', 'French', 'German', 'Arabic', 'Mandarin', 'Other',
+  'Brazilian Portuguese', 'Thai', 'Hungarian', 'Italian', 'French', 'German',
+  'Arabic', 'Mandarin', 'Japanese', 'Korean', 'Turkish', 'Greek',
+  'Swedish', 'Dutch', 'Czech', 'Ukrainian', 'Albanian', 'Bulgarian',
+  'Serbian', 'Lithuanian', 'Hindi', 'Punjabi', 'Urdu', 'Persian',
+  'Bengali', 'Somali', 'Other',
 ] as const
 
 export const SUBSCRIPTION_TIERS = {

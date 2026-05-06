@@ -635,6 +635,9 @@ async def upgrade_tier(
         sub_record.pending_tier = None
 
     escort.subscription_tier = body.tier
+    # Auto-grant Blue Tick when upgrading to premium/elite if identity already verified
+    if body.tier in ("premium", "elite") and escort.verification_level >= 2:
+        escort.blue_tick_active = True
     await db.flush()
 
     tier_label = body.tier.capitalize()
@@ -954,9 +957,13 @@ async def _handle_subscription_updated(sub_obj: dict, db: AsyncSession):
             if period_end:
                 escort.subscription_expires_at = period_end
             if period_renewed and sub.pending_tier:
-                escort.subscription_tier = sub.pending_tier
-                sub.tier = sub.pending_tier
+                new_tier = sub.pending_tier
+                escort.subscription_tier = new_tier
+                sub.tier = new_tier
                 sub.pending_tier = None
+                # Auto-grant Blue Tick when pending upgrade becomes active at period renewal
+                if new_tier in ("premium", "elite") and escort.verification_level >= 2:
+                    escort.blue_tick_active = True
 
     await db.flush()
 
