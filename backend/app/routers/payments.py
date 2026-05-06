@@ -432,16 +432,6 @@ async def create_blue_tick_checkout(
             status_code=400,
             detail="Blue Tick is included free with your Premium or Elite plan. Complete identity verification to activate it — no extra charge."
         )
-    if escort.subscription_tier == "free":
-        raise HTTPException(
-            status_code=400,
-            detail="An active paid subscription is required to apply for Blue Tick."
-        )
-    if escort.verification_level < 2:
-        raise HTTPException(
-            status_code=400,
-            detail="Identity verification must be completed before applying for Blue Tick."
-        )
     if escort.blue_tick_stripe_subscription_id:
         raise HTTPException(status_code=400, detail="You already have an active Blue Tick subscription")
 
@@ -610,8 +600,9 @@ async def upgrade_tier(
                 "auto_advance": False,
             })
             invoice_id = invoice_obj.id
-            client.invoices.finalize_invoice(invoice_id, params={})
-            client.invoices.pay(invoice_id, params={})
+            finalized_invoice = client.invoices.finalize_invoice(invoice_id, params={})
+            if finalized_invoice.amount_due > 0 and finalized_invoice.status != "paid":
+                client.invoices.pay(invoice_id, params={})
         except stripe.StripeError as e:
             err_msg = getattr(e, "user_message", None) or str(e)
             if invoice_id:
