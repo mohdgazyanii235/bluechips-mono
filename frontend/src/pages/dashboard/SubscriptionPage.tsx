@@ -298,11 +298,31 @@ export function SubscriptionPage() {
       return
     }
 
+    const isNewSub = !hasActiveStripeSubscription || currentTier === 'free'
+
+    if (isNewSub) {
+      // New subscription — go straight to Stripe Checkout (price shown there)
+      setPreviewLoading(tier)
+      try {
+        const { url } = await paymentsApi.createCheckout(
+          tier,
+          billing,
+          appliedCode ? { type: appliedCode.type, code: appliedCode.code } : undefined,
+        )
+        window.location.href = url
+      } catch (err: any) {
+        toast.error(err?.response?.data?.detail ?? 'Could not start checkout. Please try again.')
+      } finally {
+        setPreviewLoading(null)
+      }
+      return
+    }
+
+    // Existing subscriber switching plans — show upgrade preview modal with exact pro-rata charge
     setPreviewLoading(tier)
     try {
       const preview = await paymentsApi.getUpgradePreview(tier, billing)
-      const isNewSub = !hasActiveStripeSubscription || currentTier === 'free'
-      setPendingChange({ preview, tier, planName, isNewSubscription: isNewSub })
+      setPendingChange({ preview, tier, planName, isNewSubscription: false })
     } catch (err: any) {
       toast.error(err?.response?.data?.detail ?? 'Could not load plan details. Please try again.')
     } finally {
