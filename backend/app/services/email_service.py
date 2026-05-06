@@ -134,6 +134,114 @@ async def send_verification_approved_to_escort(escort_email: str, escort_stage_n
     return await send_email(escort_email, f"✓ {level_name}", html)
 
 
+async def send_downgrade_photo_warning(
+    escort_email: str,
+    stage_name: str,
+    current_photos: int,
+    new_limit: int,
+    excess: int,
+    new_tier: str,
+    billing_date: str,
+) -> bool:
+    photos_url = f"{settings.FRONTEND_URL}/dashboard/profile"
+    tier_label = new_tier.capitalize()
+    html = f"""
+    <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; background: #0A0A0A; color: #F5F0E8; padding: 40px; border-radius: 8px;">
+        <h1 style="color: #C9A84C; font-size: 28px; margin-bottom: 8px;">Bluechips London</h1>
+        <p style="color: #888; margin-bottom: 32px; font-size: 13px; letter-spacing: 2px; text-transform: uppercase;">Action Required</p>
+        <h2 style="font-size: 20px; margin-bottom: 16px;">⚠️ Remove {excess} photo{'s' if excess > 1 else ''} before {billing_date}</h2>
+        <p style="line-height: 1.7; color: #ccc; margin-bottom: 16px;">Hi {stage_name},</p>
+        <p style="line-height: 1.7; color: #ccc; margin-bottom: 16px;">
+            You've scheduled a downgrade to the <strong style="color: #C9A84C;">{tier_label}</strong> plan,
+            which allows up to <strong>{new_limit} photos</strong>.
+        </p>
+        <p style="line-height: 1.7; color: #ccc; margin-bottom: 16px;">
+            You currently have <strong>{current_photos} photos</strong> uploaded.
+            Please remove at least <strong style="color: #E87040;">{excess} photo{'s' if excess > 1 else ''}</strong>
+            before <strong>{billing_date}</strong> — otherwise your profile will be automatically
+            paused until you bring the total within the new limit.
+        </p>
+        <a href="{photos_url}"
+           style="display: inline-block; background: #C9A84C; color: #0A0A0A; padding: 14px 32px;
+                  text-decoration: none; font-weight: bold; border-radius: 4px; letter-spacing: 1px; margin-bottom: 32px;">
+            MANAGE MY PHOTOS
+        </a>
+        <p style="color: #555; font-size: 12px; margin-top: 32px;">
+            This is an automated message. Questions? Contact {settings.ADMIN_EMAIL}
+        </p>
+    </div>
+    """
+    return await send_email(escort_email, f"Action required: remove {excess} photo{'s' if excess > 1 else ''} by {billing_date}", html)
+
+
+async def send_profile_paused_photo_limit(
+    escort_email: str,
+    stage_name: str,
+    current_photos: int,
+    photo_limit: int,
+    new_tier: str,
+) -> bool:
+    photos_url = f"{settings.FRONTEND_URL}/dashboard/profile"
+    excess = current_photos - photo_limit
+    tier_label = new_tier.capitalize()
+    html = f"""
+    <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; background: #0A0A0A; color: #F5F0E8; padding: 40px; border-radius: 8px;">
+        <h1 style="color: #C9A84C; font-size: 28px; margin-bottom: 8px;">Bluechips London</h1>
+        <p style="color: #888; margin-bottom: 32px; font-size: 13px; letter-spacing: 2px; text-transform: uppercase;">Profile Paused</p>
+        <h2 style="font-size: 20px; margin-bottom: 16px;">Your profile has been paused</h2>
+        <p style="line-height: 1.7; color: #ccc; margin-bottom: 16px;">Hi {stage_name},</p>
+        <p style="line-height: 1.7; color: #ccc; margin-bottom: 16px;">
+            Your plan has changed to <strong style="color: #C9A84C;">{tier_label}</strong>,
+            which allows a maximum of <strong>{photo_limit} photos</strong>.
+            You currently have <strong>{current_photos} photos</strong> on your profile.
+        </p>
+        <p style="line-height: 1.7; color: #ccc; margin-bottom: 32px;">
+            Your profile has been <strong style="color: #E87040;">temporarily hidden from search</strong>
+            until you remove <strong>{excess} photo{'s' if excess > 1 else ''}</strong>.
+            As soon as you're within the limit your profile will go live again automatically — no need to contact us.
+        </p>
+        <a href="{photos_url}"
+           style="display: inline-block; background: #C9A84C; color: #0A0A0A; padding: 14px 32px;
+                  text-decoration: none; font-weight: bold; border-radius: 4px; letter-spacing: 1px; margin-bottom: 32px;">
+            REMOVE PHOTOS NOW
+        </a>
+        <p style="line-height: 1.7; color: #888; font-size: 13px; margin-bottom: 16px;">
+            Want to keep all your photos? <a href="{settings.FRONTEND_URL}/dashboard/subscription"
+            style="color: #C9A84C;">Upgrade your plan</a> to restore full access.
+        </p>
+        <p style="color: #555; font-size: 12px; margin-top: 32px;">
+            Questions? Contact {settings.ADMIN_EMAIL}
+        </p>
+    </div>
+    """
+    return await send_email(escort_email, "Your profile has been paused — action required", html)
+
+
+async def send_profile_reactivated(escort_email: str, stage_name: str) -> bool:
+    dashboard_url = f"{settings.FRONTEND_URL}/dashboard"
+    html = f"""
+    <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; background: #0A0A0A; color: #F5F0E8; padding: 40px; border-radius: 8px;">
+        <h1 style="color: #C9A84C; font-size: 28px; margin-bottom: 8px;">Bluechips London</h1>
+        <p style="color: #888; margin-bottom: 32px; font-size: 13px; letter-spacing: 2px; text-transform: uppercase;">Profile Live</p>
+        <h2 style="font-size: 20px; margin-bottom: 16px;">✓ Your profile is live again</h2>
+        <p style="line-height: 1.7; color: #ccc; margin-bottom: 16px;">Hi {stage_name},</p>
+        <p style="line-height: 1.7; color: #ccc; margin-bottom: 32px;">
+            You've brought your photo count within your plan's limit — your profile is now
+            <strong style="color: #4ADE80;">visible in search again</strong>. No further action needed.
+        </p>
+        <a href="{dashboard_url}"
+           style="display: inline-block; background: #C9A84C; color: #0A0A0A; padding: 14px 32px;
+                  text-decoration: none; font-weight: bold; border-radius: 4px; letter-spacing: 1px;">
+            GO TO DASHBOARD
+        </a>
+        <p style="color: #555; font-size: 12px; margin-top: 32px;">
+            This is an automated message. Questions? Contact {settings.ADMIN_EMAIL}
+        </p>
+    </div>
+    """
+    return await send_email(escort_email, "✓ Your profile is live again", html)
+
+
 async def send_verification_denied_to_escort(escort_email: str, escort_stage_name: str, admin_notes: str, level: int) -> bool:
     support_email = settings.ADMIN_EMAIL
     level_name = "Identity Verification" if level == 2 else "Blue Tick Verification"

@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
 from app.models.escort import Escort, EscortPhoto
 from app.services.storage_service import upload_image, delete_file
+from app.services.email_service import send_profile_reactivated
 from app.routers.deps import get_current_verified_escort
 from app.schemas.common import MessageResponse
 from app.config import settings
@@ -74,6 +75,7 @@ async def upload_photo(
 @router.delete("/photo/{photo_id}", response_model=MessageResponse)
 async def delete_photo(
     photo_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     escort: Escort = Depends(get_current_verified_escort),
     db: AsyncSession = Depends(get_db),
 ):
@@ -96,6 +98,15 @@ async def delete_photo(
     remaining = remaining_result.scalars().all()
     if remaining and not any(p.is_primary for p in remaining):
         remaining[0].is_primary = True
+
+    # Auto-reactivate profile if it was paused due to photo limit and is now within limit
+    if not escort.is_approved and len(remaining) <= escort.photo_limit:
+        escort.is_approved = True
+        background_tasks.add_task(
+            send_profile_reactivated,
+            escort_email=escort.email,
+            stage_name=escort.stage_name,
+        )
 
     return MessageResponse(message="Photo deleted")
 

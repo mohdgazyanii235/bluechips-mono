@@ -10,13 +10,19 @@ from pydantic import BaseModel
 from app.config import settings
 from app.database import get_db
 from app.models.discount import DiscountCode
-from app.models.escort import Escort
+from app.models.escort import Escort, EscortPhoto
 from app.models.platform_config import PlatformConfig
 from app.models.subscription import Subscription
 from app.models.verification import Verification
 from app.routers.deps import get_current_verified_escort
 from app.schemas.common import MessageResponse
-from app.services.email_service import send_verification_submitted_to_admin
+from app.services.email_service import (
+    send_verification_submitted_to_admin,
+    send_downgrade_photo_warning,
+    send_profile_paused_photo_limit,
+)
+
+_TIER_PHOTO_LIMITS = {"free": 3, "essential": 8, "premium": 50, "elite": 50}
 
 router = APIRouter(tags=["Payments"])
 
@@ -479,6 +485,7 @@ async def create_blue_tick_checkout(
 @router.post("/payments/upgrade-tier", response_model=MessageResponse)
 async def upgrade_tier(
     body: CheckoutRequest,
+    background_tasks: BackgroundTasks,
     escort: Escort = Depends(get_current_verified_escort),
     db: AsyncSession = Depends(get_db),
 ):
@@ -545,6 +552,28 @@ async def upgrade_tier(
             sub_record.pending_tier = body.tier
             sub_record.stripe_price_id = price_id
         await db.flush()
+
+        # Send photo warning email if escort has more photos than new tier allows
+        new_photo_limit = _TIER_PHOTO_LIMITS.get(body.tier, 3)
+        from sqlalchemy import func as sqlfunc
+        photo_count_result = await db.execute(
+            select(sqlfunc.count()).select_from(EscortPhoto).where(EscortPhoto.escort_id == escort.id)
+        )
+        photo_count = photo_count_result.scalar() or 0
+        if photo_count > new_photo_limit:
+            info = _monthly_prorate_info()
+            d = info["next_1st"]
+            billing_date_str = f"{d.day} {d.strftime('%B')} {d.year}"
+            background_tasks.add_task(
+                send_downgrade_photo_warning,
+                escort_email=escort.email,
+                stage_name=escort.stage_name,
+                current_photos=photo_count,
+                new_limit=new_photo_limit,
+                excess=photo_count - new_photo_limit,
+                new_tier=body.tier,
+                billing_date=billing_date_str,
+            )
 
         tier_label = body.tier.capitalize()
         return MessageResponse(
@@ -803,7 +832,7 @@ async def stripe_webhook(
         await _handle_checkout_completed(data, db, background_tasks)
 
     elif event_type == "customer.subscription.updated":
-        await _handle_subscription_updated(data, db)
+        await _handle_subscription_updated(data, db, background_tasks)
 
     elif event_type == "customer.subscription.deleted":
         await _handle_subscription_deleted(data, db)
@@ -922,7 +951,7 @@ async def _handle_checkout_completed(session: dict, db: AsyncSession, background
     await db.flush()
 
 
-async def _handle_subscription_updated(sub_obj: dict, db: AsyncSession):
+async def _handle_subscription_updated(sub_obj: dict, db: AsyncSession, background_tasks: BackgroundTasks):
     subscription_id = sub_obj.get("id")
     status = sub_obj.get("status")
     cancel_at_period_end = sub_obj.get("cancel_at_period_end", False)
@@ -964,6 +993,23 @@ async def _handle_subscription_updated(sub_obj: dict, db: AsyncSession):
                 # Auto-grant Blue Tick when pending upgrade becomes active at period renewal
                 if new_tier in ("premium", "elite") and escort.verification_level >= 2:
                     escort.blue_tick_active = True
+                # Pause profile if photo count exceeds new tier's limit
+                new_photo_limit = _TIER_PHOTO_LIMITS.get(new_tier, 3)
+                from sqlalchemy import func as sqlfunc
+                photo_count_res = await db.execute(
+                    select(sqlfunc.count()).select_from(EscortPhoto).where(EscortPhoto.escort_id == escort.id)
+                )
+                photo_count = photo_count_res.scalar() or 0
+                if photo_count > new_photo_limit:
+                    escort.is_approved = False
+                    background_tasks.add_task(
+                        send_profile_paused_photo_limit,
+                        escort_email=escort.email,
+                        stage_name=escort.stage_name,
+                        current_photos=photo_count,
+                        photo_limit=new_photo_limit,
+                        new_tier=new_tier,
+                    )
 
     await db.flush()
 
