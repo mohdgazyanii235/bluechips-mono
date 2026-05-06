@@ -371,11 +371,53 @@ _LANGUAGES_POOL = [
 ]
 
 _ABOUT_TEMPLATES = [
-    "Hi darling, I'm {name}, a passionate and attentive companion based in London. I love meeting new people and creating unforgettable experiences. I am warm, genuine and always put my clients first. Whether you're looking for stimulating conversation over dinner or a more intimate encounter, I'm here to make your time with me something truly special.",
-    "Hello, I'm {name}. I'm an independent companion offering a discreet, sophisticated and pleasurable experience. I take great pride in my appearance and love to make every meeting memorable. I'm fluent in English and always happy to chat beforehand to put you at ease.",
-    "Welcome! I'm {name}, a professional companion with a passion for making genuine connections. I offer a warm, friendly and completely non-judgemental service. I believe in quality over quantity and dedicate my full attention to each and every client.",
-    "Hi there, I'm {name}. I'm an elegant, adventurous companion who loves life and everything it has to offer. I'm available for incall and outcall appointments and always ensure complete discretion. I'm confident, fun and down to earth — I promise you'll feel relaxed from the moment we meet.",
-    "I'm {name}, a sophisticated London companion with a genuine passion for people. I take care of my appearance and love to dress up for a special occasion. Whether you want a GFE or something more adventurous, I promise to leave you wanting more.",
+    # GFE / romantic
+    "Hey baby, I'm {name} 💋 I'm the kind of girl who'll kiss you like she means it, hold you close and make you forget about the outside world for a few hours. I love the girlfriend experience — real kissing, real passion, real connection. I'll run my hands through your hair, whisper in your ear and give you everything a good girl shouldn't. If you want someone who's genuinely into it and not just going through the motions, you've found her. I'm tactile, affectionate and I genuinely love sex — so don't be shy about telling me exactly what you want.",
+
+    # PSE / explicit
+    "Hi, I'm {name} and I'll be brutally honest — I love sex. I'm one of those girls who actually gets turned on by her clients, and trust me, you'll feel the difference. I offer a full PSE which means nothing is off the table. I love OWO, I swallow, I'll go on top and ride you until you can't take it anymore, and I'm not squeamish about anything. Deep throat, anal, facials — all available for the right gentleman. I don't do rushed or mechanical. Come to me when you want someone who's going to absolutely devour you.",
+
+    # Dominant / confident
+    "I'm {name}. I'm not your average girl next door — I'm the woman who takes control the moment you walk through my door. Whether you want me to tie you up, tease you until you beg, or simply take charge in bed, I know exactly what I'm doing. I've been told my hands are magic and my mouth is even better. I'm dominant by nature but I can read what a man needs — sometimes that's a firm hand, sometimes it's a filthy whisper telling you exactly what I'm going to do to you. Think you can handle me?",
+
+    # Playful / naughty
+    "Hello gorgeous 😈 I'm {name}, your favourite bad girl. I'm cheeky, fun and absolutely filthy once you get me going. I love a good laugh but I love a good shag even more. I'm the type who'll tease you mercilessly, get you rock hard and then make it very, very worth the wait. Expect lots of kissing, lots of touching, and me making sounds that'll drive you crazy. I'm naturally high energy in the bedroom — my regulars say I'm absolutely addictive. Come find out why.",
+
+    # Sensual / slow burn
+    "I'm {name}, and I believe the best sex starts long before you get to the bedroom. I'm all about build-up — slow kisses down your neck, fingertips running across your chest, taking my time until you're desperate for more. I love erotic massage and full body contact. I'll use every inch of my body to drive you wild. When you finally have me, it'll feel like nothing you've experienced before. I'm passionate, sensual and completely present with every man I meet. No rushing, no clock-watching — just pure, unhurried pleasure.",
+
+    # Direct / no-nonsense
+    "Let me keep this simple. I'm {name}, I'm sexy, I'm clean, and I'm very, very good at what I do. I give brilliant OWO, I love being on top, and I genuinely enjoy anal with the right person. I keep myself in great shape, I'm always freshly waxed and I smell incredible. My incall is clean and private. I don't do drama, I don't do timewasters. If you want a no-fuss, high-quality experience with a girl who's actually enthusiastic, book me. You won't be disappointed.",
+
+    # Exotic / international
+    "Hola, I'm {name} 🌹 Born in Europe, now bringing a little Mediterranean fire to London. Back home, sex isn't something to be shy about — it's something to celebrate, to savour, to do loudly and often. I bring that same energy to every appointment. I'm very oral — I love giving and receiving — and I'm the type who'll grab your head and guide you exactly where I want you. I also speak from experience when I say my hips don't lie. Book me and I'll show you what passion really means.",
+
+    # Experienced / mature confidence
+    "I'm {name} — older than some of the girls on here and better than all of them 😏 I've been doing this long enough to know exactly how to read a man and give him what he actually wants, not just what he asks for. I'm very oral, very tactile, and I have zero inhibitions. I enjoy sex — genuinely, properly enjoy it — and I'm not embarrassed to show it. My regulars keep coming back because I make them feel like the only man in the world for the time we're together. That's not an act. That's just me.",
+
+    # Submissive / eager to please
+    "Hi, I'm {name} and I live to please. I'm the kind of girl who gets satisfaction from making you completely lose control. Tell me what you want and I'll do it — I love following instructions in the bedroom and I'm incredibly responsive. I'm very tactile, I love oral both ways, and I won't stop until you're completely spent. I'm soft-spoken and sweet outside the bedroom but an absolute pleaser once the door is closed. If you want a girl who'll look up at you with those eyes and ask 'is that good, baby?' — call me.",
+
+    # Horny / high energy
+    "Okay real talk — I'm {name} and I have an absolutely filthy mind. I think about sex constantly and I need an outlet for it. I'm one of those girls who genuinely gets dripping wet for her clients and isn't embarrassed about it. I love OWO, I love being bent over, I love it when a man grabs my hips and takes control. I also give an incredible oral experience — slow, sloppy, enthusiastic. I'll moan, I'll writhe, I'll scratch your back. This isn't a performance — this is just me when I'm turned on, which is basically always.",
+
+    # BDSM / adventurous
+    "I'm {name} — adventurous, open-minded, and completely unshockable. If your tastes run a little darker than vanilla, you're in the right place. I love bondage, teasing, spanking, role play and power dynamics. I can be dominant or submissive depending on your preference — I've been told I'm equally terrifying and irresistible in both roles. I take safety and consent seriously but within that I'll push every boundary you want pushed. If you have a fantasy you've never told anyone, tell me. Chances are I'll not only be up for it — I'll make it even better than you imagined.",
+
+    # Girlfriend experience (detailed)
+    "I'm {name} 💕 and if you've been craving real intimacy — not just sex but actual connection — you've found the right girl. I offer a genuine GFE: proper kissing (I'm a fantastic kisser), cuddling, whispering, looking into your eyes. I'll make you feel wanted and desired. In the bedroom I'm passionate and generous — I love long sessions where we take our time exploring each other. I'm very into oral — giving and receiving — and I love that lazy, slow, intimate sex where you pull me close and we lose track of time. My regulars say being with me feels like being with a girlfriend who's mad about you. That's exactly what I'm going for.",
+
+    # Luxury / high-end
+    "Darling, I'm {name}. I'm selective about who I see — not because I'm precious, but because I give everything to the men I meet and I need to know you're serious. What you get with me is an immaculate experience: I'm impeccably groomed, I smell divine, my incall is luxurious, and in bed I am absolutely insatiable. I love sex in every position, every configuration. I'm particularly known for my oral — slow, deep and with full eye contact. I love to finish covered and I love to swallow. If you want the best, I'm it.",
+
+    # Young and fresh
+    "Hi I'm {name} 🌸 I know I look innocent but trust me, I'm really not 😂 I'm one of those girls who discovered she loves sex and never looked back. I'm enthusiastic, flexible (literally), and I genuinely get excited meeting new people. I love OWO and I'm told I'm very good at it. I love riding on top, I love doggy, and I'm not shy about telling you when I'm enjoying myself — which I usually am. I'm very tactile so expect lots of touching and kissing throughout. Come make my day 💋",
+
+    # Older man specialist
+    "I'm {name}, and I have a confession — I have a thing for older men. The confidence, the knowing what they want, the experience. If you're a mature gentleman who appreciates a young, willing woman who'll treat you like a king, we are going to get along very well. I love slow, appreciative sex — the kind where a man takes his time with a woman's body. I'll give you OWO to start things off right, and I'm very flexible about how we spend our time together. Discretion is everything and I am the soul of it.",
+
+    # Party girl / social
+    "Hey! I'm {name} — the fun one 🥂 I'm sociable, bubbly and absolutely love going out. If you want a date for dinner, drinks or an event before we head back somewhere private, I'm your girl — I'm great company and I scrub up beautifully. Behind closed doors though, I'm a completely different animal. I love sex and I'm not polite about it. I'll tell you what I want, I'll ask what you want, and then we'll spend the rest of the night making it happen. Life's too short for boring sex.",
 ]
 
 _COMMON_TAGS = ["GFE", "DFK", "OWO", "Massage", "69"]
