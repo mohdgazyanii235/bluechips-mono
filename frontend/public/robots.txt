@@ -1,0 +1,13 @@
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /admin
+Disallow: /dashboard/
+Disallow: /dashboard
+Disallow: /login
+Disallow: /register
+Disallow: /verify-email
+Disallow: /api/
+
+Sitemap: https://bluechips.live/sitemap.xml
+Sitemap: https://blog.bluechips.live/sitemap-index.xml

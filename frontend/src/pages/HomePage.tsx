@@ -300,11 +300,34 @@ export function HomePage() {
   const { data: escortsData, isLoading } = useEscorts({ per_page: 10, page: 1 })
   const { data: boroughs = [] } = useBoroughs()
 
+  const orgSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    name: 'Bluechips London',
+    description: "London's premium independent companion marketing directory",
+    url: 'https://bluechips.live',
+    logo: 'https://bluechips.live/favicon.svg',
+    contactPoint: {
+      '@type': 'ContactPoint',
+      contactType: 'customer support',
+      email: 'mohdgazyanii235@gmail.com',
+    },
+    areaServed: { '@type': 'City', name: 'London', addressCountry: 'GB' },
+  }
+
   return (
     <Layout>
       <Helmet>
         <title>Bluechips London — Premium Companion Directory</title>
         <meta name="description" content="London's most exclusive companion marketing directory. Browse verified, independent companion listings across all London boroughs. Discreet. Premium. Trusted." />
+        <link rel="canonical" href="https://bluechips.live/" />
+        <meta property="og:type" content="website" />
+        <meta property="og:title" content="Bluechips London — Premium Companion Directory" />
+        <meta property="og:description" content="London's most exclusive companion marketing directory. Browse verified, independent companion listings across all London boroughs." />
+        <meta property="og:url" content="https://bluechips.live/" />
+        <meta name="twitter:title" content="Bluechips London — Premium Companion Directory" />
+        <meta name="twitter:description" content="London's most exclusive companion marketing directory. Verified, discreet, premium." />
+        <script type="application/ld+json">{JSON.stringify(orgSchema)}</script>
       </Helmet>
 
       <HeroSection />

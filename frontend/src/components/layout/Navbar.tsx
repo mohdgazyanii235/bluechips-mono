@@ -9,6 +9,7 @@ import { cn } from '@/utils/cn'
 const NAV_LINKS_PUBLIC = [
   { label: 'Browse', href: '/escorts' },
   { label: 'London Areas', href: '/areas' },
+  { label: 'Blog', href: 'https://blog.bluechips.live', external: true },
   { label: 'Join Us', href: '/join' },
   { label: 'About', href: '/about' },
 ]
@@ -16,6 +17,7 @@ const NAV_LINKS_PUBLIC = [
 const NAV_LINKS_AUTH = [
   { label: 'Browse', href: '/escorts' },
   { label: 'London Areas', href: '/areas' },
+  { label: 'Blog', href: 'https://blog.bluechips.live', external: true },
   { label: 'About', href: '/about' },
 ]
 
@@ -62,20 +64,30 @@ export function Navbar() {
 
           {/* Desktop Nav */}
           <div className="hidden lg:flex items-center gap-8">
-            {navLinks.map((link) => (
-              <Link
-                key={link.href}
-                to={link.href}
-                className={cn(
-                  'text-sm font-medium transition-colors duration-200',
-                  location.pathname === link.href
-                    ? 'text-gold-400'
-                    : 'text-stone-400 hover:text-ivory-100'
-                )}
-              >
-                {link.label}
-              </Link>
-            ))}
+            {navLinks.map((link) =>
+              link.external ? (
+                <a
+                  key={link.href}
+                  href={link.href}
+                  className="text-sm font-medium text-stone-400 hover:text-ivory-100 transition-colors duration-200"
+                >
+                  {link.label}
+                </a>
+              ) : (
+                <Link
+                  key={link.href}
+                  to={link.href}
+                  className={cn(
+                    'text-sm font-medium transition-colors duration-200',
+                    location.pathname === link.href
+                      ? 'text-gold-400'
+                      : 'text-stone-400 hover:text-ivory-100'
+                  )}
+                >
+                  {link.label}
+                </Link>
+              )
+            )}
           </div>
 
           {/* Desktop Auth */}
@@ -154,15 +166,25 @@ export function Navbar() {
             className="lg:hidden bg-black/98 border-t border-surface-border overflow-hidden"
           >
             <div className="page-container py-4 space-y-1">
-              {navLinks.map((link) => (
-                <Link
-                  key={link.href}
-                  to={link.href}
-                  className="block px-3 py-3 text-stone-300 hover:text-gold-400 font-medium transition-colors"
-                >
-                  {link.label}
-                </Link>
-              ))}
+              {navLinks.map((link) =>
+                link.external ? (
+                  <a
+                    key={link.href}
+                    href={link.href}
+                    className="block px-3 py-3 text-stone-300 hover:text-gold-400 font-medium transition-colors"
+                  >
+                    {link.label}
+                  </a>
+                ) : (
+                  <Link
+                    key={link.href}
+                    to={link.href}
+                    className="block px-3 py-3 text-stone-300 hover:text-gold-400 font-medium transition-colors"
+                  >
+                    {link.label}
+                  </Link>
+                )
+              )}
               <div className="border-t border-surface-border pt-4 mt-4 space-y-2">
                 {isAuthenticated ? (
                   <>

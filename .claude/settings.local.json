@@ -30,7 +30,9 @@
       "Bash(curl -s \"http://localhost:8000/api/escorts?per_page=1\")",
       "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('profile_type:', d['items'][0].get\\('profile_type', 'MISSING'\\)\\)\")",
       "Bash(curl -s \"http://localhost:8000/api/escorts/test123\")",
-      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('whatsapp:', d.get\\('whatsapp_number', 'MISSING'\\), '| phone:', d.get\\('phone_number', 'MISSING'\\), '| profile_type:', d.get\\('profile_type', 'MISSING'\\)\\)\")"
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('whatsapp:', d.get\\('whatsapp_number', 'MISSING'\\), '| phone:', d.get\\('phone_number', 'MISSING'\\), '| profile_type:', d.get\\('profile_type', 'MISSING'\\)\\)\")",
+      "Bash(npm run *)",
+      "Bash(git add *)"
     ]
   }
 }

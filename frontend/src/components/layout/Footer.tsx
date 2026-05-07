@@ -26,11 +26,18 @@ export function Footer() {
                 { label: 'Available Now', href: '/escorts?available_now=true' },
                 { label: 'Blue Tick Verified', href: '/escorts?blue_tick_only=true' },
                 { label: 'STD Tested', href: '/escorts?std_tested=true' },
+                { label: 'Blog', href: 'https://blog.bluechips.live', external: true },
               ].map((link) => (
                 <li key={link.href}>
-                  <Link to={link.href} className="text-stone-400 text-sm hover:text-gold-400 transition-colors">
-                    {link.label}
-                  </Link>
+                  {link.external ? (
+                    <a href={link.href} className="text-stone-400 text-sm hover:text-gold-400 transition-colors">
+                      {link.label}
+                    </a>
+                  ) : (
+                    <Link to={link.href} className="text-stone-400 text-sm hover:text-gold-400 transition-colors">
+                      {link.label}
+                    </Link>
+                  )}
                 </li>
               ))}
             </ul>

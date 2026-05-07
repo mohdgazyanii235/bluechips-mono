@@ -30,6 +30,11 @@ export function BoroughPage() {
       <Helmet>
         <title>{title}</title>
         <meta name="description" content={description} />
+        <link rel="canonical" href={`https://bluechips.live/areas/${slug}`} />
+        <meta property="og:type" content="website" />
+        <meta property="og:title" content={title} />
+        <meta property="og:description" content={description} />
+        <meta property="og:url" content={`https://bluechips.live/areas/${slug}`} />
       </Helmet>
 
       <div className="page-container py-10 space-y-8">

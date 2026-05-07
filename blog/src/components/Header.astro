@@ -1,0 +1,37 @@
+---
+const navItems = [
+  { label: 'Home', href: '/' },
+  { label: 'All Companions', href: 'https://bluechips.live/escorts' },
+  { label: 'Blue Tick Verified', href: 'https://bluechips.live/escorts?blue_tick_only=true' },
+  { label: 'List Your Profile', href: 'https://bluechips.live/join' },
+];
+---
+
+<header class="sticky top-0 z-50 border-b border-surface-border bg-black/80 backdrop-blur-md">
+  <div class="page-container">
+    <div class="flex items-center justify-between h-16">
+      <a href="/" class="flex items-baseline gap-2">
+        <span class="font-serif text-xl gold-text tracking-tight font-bold">BLUECHIPS</span>
+        <span class="text-stone-600 text-[10px] uppercase tracking-[0.3em]">Blog</span>
+      </a>
+
+      <nav class="hidden md:flex items-center gap-7">
+        {navItems.map((item) => (
+          <a
+            href={item.href}
+            class="text-stone-400 hover:text-gold-400 text-sm transition-colors"
+          >
+            {item.label}
+          </a>
+        ))}
+      </nav>
+
+      <a
+        href="https://bluechips.live"
+        class="text-xs uppercase tracking-widest text-gold-400 border border-gold-400/30 hover:bg-gold-400/10 px-4 py-1.5 rounded-full transition-colors"
+      >
+        Visit Bluechips →
+      </a>
+    </div>
+  </div>
+</header>

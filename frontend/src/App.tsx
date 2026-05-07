@@ -13,6 +13,9 @@ import { AreasPage } from '@/pages/AreasPage'
 import { JoinPage } from '@/pages/JoinPage'
 import { AboutPage } from '@/pages/AboutPage'
 import { SafetyPage } from '@/pages/SafetyPage'
+import { PrivacyPage } from '@/pages/PrivacyPage'
+import { TermsPage } from '@/pages/TermsPage'
+import { ContactPage } from '@/pages/ContactPage'
 
 // Auth pages
 import { LoginPage } from '@/pages/auth/LoginPage'
@@ -79,6 +82,9 @@ export default function App() {
               <Route path="/join" element={<JoinPage />} />
               <Route path="/about" element={<AboutPage />} />
               <Route path="/safety" element={<SafetyPage />} />
+              <Route path="/privacy" element={<PrivacyPage />} />
+              <Route path="/terms" element={<TermsPage />} />
+              <Route path="/contact" element={<ContactPage />} />
               <Route path="/verify-email" element={<VerifyEmailPage />} />
 
               {/* Auth (guests only) */}

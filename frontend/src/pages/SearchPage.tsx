@@ -42,6 +42,11 @@ export function SearchPage() {
       <Helmet>
         <title>{`${pageTitle} — Bluechips London`}</title>
         <meta name="description" content={`Browse verified independent companion listings${boroughTitle ? ` in ${boroughTitle}` : ' across London'}. Discreet, premium, verified.`} />
+        <link rel="canonical" href={`https://bluechips.live/escorts${filters.borough_slug ? `?borough_slug=${filters.borough_slug}` : ''}`} />
+        <meta property="og:type" content="website" />
+        <meta property="og:title" content={`${pageTitle} — Bluechips London`} />
+        <meta property="og:description" content={`Browse verified independent companion listings${boroughTitle ? ` in ${boroughTitle}` : ' across London'}.`} />
+        <meta property="og:url" content={`https://bluechips.live/escorts${filters.borough_slug ? `?borough_slug=${filters.borough_slug}` : ''}`} />
       </Helmet>
 
       <div className="page-container py-10 space-y-8">

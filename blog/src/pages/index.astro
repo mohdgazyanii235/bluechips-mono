@@ -1,0 +1,85 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { getCollection } from 'astro:content';
+
+const posts = (await getCollection('blog', ({ data }) => !data.draft)).sort(
+  (a, b) => b.data.publishDate.valueOf() - a.data.publishDate.valueOf()
+);
+
+const formatDate = (date: Date) =>
+  date.toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' });
+
+const blogSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'Blog',
+  name: 'Bluechips London Blog',
+  description: 'Insights, safety guidance, and editorial from London\'s premium companion directory.',
+  url: 'https://blog.bluechips.live',
+  publisher: {
+    '@type': 'Organization',
+    name: 'Bluechips London',
+    url: 'https://bluechips.live',
+  },
+  blogPost: posts.map((post) => ({
+    '@type': 'BlogPosting',
+    headline: post.data.title,
+    description: post.data.description,
+    url: `https://blog.bluechips.live/${post.slug}`,
+    datePublished: post.data.publishDate.toISOString(),
+  })),
+};
+---
+
+<BaseLayout
+  title="Bluechips London Blog — Insights, Safety, and Editorial"
+  description="Honest editorial on London's companion scene. Borough guides, safety tips, verification explained, and what to expect."
+  jsonLd={blogSchema}
+>
+  <section class="page-container py-16 max-w-4xl">
+    <div class="space-y-4 mb-14">
+      <p class="text-xs uppercase tracking-widest text-gold-500 font-medium">Editorial</p>
+      <h1 class="font-serif text-5xl lg:text-6xl text-ivory-100 leading-[1.05] tracking-tight">
+        The <span class="gold-text">Bluechips</span> Blog
+      </h1>
+      <p class="text-stone-400 text-lg leading-relaxed max-w-2xl">
+        Borough guides, safety guidance, and editorial from London's premier marketing directory for independent companions. Honest, useful, and always considered.
+      </p>
+    </div>
+
+    <div class="space-y-1">
+      {posts.map((post, index) => (
+        <a
+          href={`/${post.slug}`}
+          class="group block py-7 border-b border-surface-border hover:border-gold-400/30 transition-colors"
+        >
+          <article class="grid md:grid-cols-[1fr_auto] gap-4 md:gap-8 items-baseline">
+            <div class="space-y-2">
+              <div class="flex items-center gap-3 text-xs">
+                {post.data.category && (
+                  <span class="text-gold-500 uppercase tracking-widest font-medium">
+                    {post.data.category}
+                  </span>
+                )}
+                <span class="text-stone-700">·</span>
+                <time datetime={post.data.publishDate.toISOString()} class="text-stone-600">
+                  {formatDate(post.data.publishDate)}
+                </time>
+              </div>
+              <h2 class="font-serif text-2xl lg:text-3xl text-ivory-200 group-hover:text-gold-400 transition-colors leading-tight">
+                {post.data.title}
+              </h2>
+              <p class="text-stone-500 leading-relaxed pt-1">{post.data.description}</p>
+            </div>
+            <div class="hidden md:flex items-center gap-1 text-gold-400/0 group-hover:text-gold-400 transition-colors text-sm whitespace-nowrap">
+              Read article →
+            </div>
+          </article>
+        </a>
+      ))}
+    </div>
+
+    {posts.length === 0 && (
+      <p class="text-stone-500 text-center py-20">No posts yet. Check back soon.</p>
+    )}
+  </section>
+</BaseLayout>

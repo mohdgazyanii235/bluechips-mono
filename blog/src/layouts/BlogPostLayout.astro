@@ -1,0 +1,163 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import { getCollection } from 'astro:content';
+import type { CollectionEntry } from 'astro:content';
+
+export interface Props {
+  entry: CollectionEntry<'blog'>;
+}
+
+const { entry } = Astro.props;
+const { data } = entry;
+
+const formatDate = (date: Date) =>
+  date.toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' });
+
+const canonical = new URL(`/${entry.slug}`, Astro.site).toString();
+
+const articleSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'Article',
+  headline: data.title,
+  description: data.description,
+  url: canonical,
+  datePublished: data.publishDate.toISOString(),
+  dateModified: (data.updateDate ?? data.publishDate).toISOString(),
+  author: {
+    '@type': 'Organization',
+    name: data.author,
+    url: 'https://bluechips.live',
+  },
+  publisher: {
+    '@type': 'Organization',
+    name: 'Bluechips London',
+    url: 'https://bluechips.live',
+    logo: {
+      '@type': 'ImageObject',
+      url: 'https://bluechips.live/favicon.svg',
+    },
+  },
+  mainEntityOfPage: {
+    '@type': 'WebPage',
+    '@id': canonical,
+  },
+  keywords: data.keywords.join(', '),
+};
+
+const breadcrumbSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'BreadcrumbList',
+  itemListElement: [
+    { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://bluechips.live/' },
+    { '@type': 'ListItem', position: 2, name: 'Blog', item: 'https://blog.bluechips.live/' },
+    { '@type': 'ListItem', position: 3, name: data.title, item: canonical },
+  ],
+};
+
+// Related posts (other posts in the collection, max 3)
+const allPosts = await getCollection('blog', ({ data }) => !data.draft);
+const relatedPosts = allPosts
+  .filter((p) => p.slug !== entry.slug)
+  .sort((a, b) => b.data.publishDate.valueOf() - a.data.publishDate.valueOf())
+  .slice(0, 3);
+---
+
+<BaseLayout
+  title={data.title}
+  description={data.description}
+  canonical={canonical}
+  ogType="article"
+  jsonLd={[articleSchema, breadcrumbSchema]}
+>
+  <article class="page-container py-12 max-w-3xl">
+    {/* Breadcrumb */}
+    <nav class="mb-8 text-xs text-stone-600 flex items-center gap-2" aria-label="Breadcrumb">
+      <a href="https://bluechips.live" class="hover:text-gold-400 transition-colors">Home</a>
+      <span>›</span>
+      <a href="/" class="hover:text-gold-400 transition-colors">Blog</a>
+      <span>›</span>
+      <span class="text-stone-500 truncate">{data.title}</span>
+    </nav>
+
+    {/* Header */}
+    <header class="space-y-5 mb-12 pb-8 border-b border-surface-border">
+      {data.category && (
+        <p class="text-xs uppercase tracking-widest text-gold-500 font-medium">
+          {data.category}
+        </p>
+      )}
+      <h1 class="font-serif text-4xl lg:text-5xl text-ivory-100 leading-[1.1] tracking-tight">
+        {data.title}
+      </h1>
+      <p class="text-lg text-stone-400 leading-relaxed">{data.description}</p>
+      <div class="flex items-center gap-4 text-stone-600 text-sm pt-2">
+        <span>{data.author}</span>
+        <span class="text-stone-700">·</span>
+        <time datetime={data.publishDate.toISOString()}>
+          {formatDate(data.publishDate)}
+        </time>
+        {data.updateDate && (
+          <>
+            <span class="text-stone-700">·</span>
+            <span>Updated {formatDate(data.updateDate)}</span>
+          </>
+        )}
+      </div>
+    </header>
+
+    {/* Body */}
+    <div class="article-prose">
+      <slot />
+    </div>
+
+    {/* Tags */}
+    {data.tags.length > 0 && (
+      <div class="mt-12 pt-8 border-t border-surface-border">
+        <p class="text-xs uppercase tracking-widest text-stone-600 font-medium mb-3">Topics</p>
+        <div class="flex flex-wrap gap-2">
+          {data.tags.map((tag) => (
+            <span class="inline-flex items-center px-3 py-1 rounded-full border border-surface-border text-stone-400 text-xs">
+              {tag}
+            </span>
+          ))}
+        </div>
+      </div>
+    )}
+
+    {/* CTA */}
+    <div class="mt-12 p-8 rounded-2xl bg-gradient-to-br from-gold-900/20 via-surface-card to-surface-card border border-gold-400/15">
+      <h2 class="font-serif text-2xl text-ivory-100 mb-3">Browse London's Premier Companions</h2>
+      <p class="text-stone-400 mb-5 leading-relaxed">
+        Bluechips London is the UK's most exclusive marketing directory for verified, independent companions. Explore profiles across every London borough.
+      </p>
+      <div class="flex flex-wrap gap-3">
+        <a href="https://bluechips.live/escorts" class="inline-flex items-center gap-2 bg-gold-400 hover:bg-gold-300 text-black font-semibold px-5 py-2.5 rounded-lg text-sm transition-colors">
+          Browse Companions →
+        </a>
+        <a href="https://bluechips.live/escorts?blue_tick_only=true" class="inline-flex items-center gap-2 border border-gold-400/30 hover:bg-gold-400/10 text-gold-400 font-medium px-5 py-2.5 rounded-lg text-sm transition-colors">
+          Verified Only
+        </a>
+      </div>
+    </div>
+
+    {/* Related posts */}
+    {relatedPosts.length > 0 && (
+      <section class="mt-16 pt-12 border-t border-surface-border">
+        <h2 class="font-serif text-2xl text-ivory-100 mb-6">Continue Reading</h2>
+        <div class="grid sm:grid-cols-3 gap-5">
+          {relatedPosts.map((post) => (
+            <a href={`/${post.slug}`} class="group block p-5 rounded-xl bg-surface-card border border-surface-border hover:border-gold-400/30 transition-all">
+              {post.data.category && (
+                <p class="text-[10px] uppercase tracking-widest text-gold-500 mb-2">{post.data.category}</p>
+              )}
+              <h3 class="font-serif text-base text-ivory-200 group-hover:text-gold-400 transition-colors leading-snug">
+                {post.data.title}
+              </h3>
+              <p class="text-stone-500 text-xs mt-2 line-clamp-2">{post.data.description}</p>
+            </a>
+          ))}
+        </div>
+      </section>
+    )}
+  </article>
+</BaseLayout>

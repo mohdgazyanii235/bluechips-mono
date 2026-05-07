@@ -2,7 +2,7 @@ import secrets
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -158,6 +158,66 @@ app.include_router(pricing.router, prefix="/api")
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "service": "Bluechips London API", "version": "1.0.0"}
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+async def sitemap_xml():
+    from sqlalchemy import select, text
+    from app.models.escort import Escort
+    from app.models.borough import Borough
+
+    base = settings.FRONTEND_URL or "https://bluechips.live"
+
+    static_pages = [
+        ("", "weekly", "1.0"),
+        ("/escorts", "daily", "0.9"),
+        ("/areas", "weekly", "0.8"),
+        ("/join", "monthly", "0.7"),
+        ("/about", "monthly", "0.5"),
+        ("/safety", "monthly", "0.5"),
+        ("/contact", "monthly", "0.4"),
+    ]
+
+    urls = []
+    for path, freq, priority in static_pages:
+        urls.append(f"""  <url>
+    <loc>{base}{path}</loc>
+    <changefreq>{freq}</changefreq>
+    <priority>{priority}</priority>
+  </url>""")
+
+    async with AsyncSessionLocal() as db:
+        # Active escort profiles
+        escort_result = await db.execute(
+            select(Escort.slug, Escort.updated_at)
+            .where(Escort.is_active == True, Escort.is_approved == True, Escort.is_email_verified == True)
+            .order_by(Escort.updated_at.desc())
+            .limit(5000)
+        )
+        for slug, updated_at in escort_result.all():
+            lastmod = updated_at.strftime("%Y-%m-%d") if updated_at else ""
+            urls.append(f"""  <url>
+    <loc>{base}/escorts/{slug}</loc>
+    {"<lastmod>" + lastmod + "</lastmod>" if lastmod else ""}
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>""")
+
+        # Borough area pages
+        borough_result = await db.execute(select(Borough.slug))
+        for (slug,) in borough_result.all():
+            urls.append(f"""  <url>
+    <loc>{base}/areas/{slug}</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.7</priority>
+  </url>""")
+
+    xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    xml += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    xml += "\n".join(urls)
+    xml += "\n</urlset>"
+
+    return Response(content=xml, media_type="application/xml")
 
 
 @app.exception_handler(Exception)

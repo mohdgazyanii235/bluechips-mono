@@ -127,11 +127,54 @@ export function EscortProfilePage() {
     { label: 'Overnight', value: escort.rate_overnight },
   ].filter((r) => r.value)
 
+  const profileUrl = `https://bluechips.live/escorts/${escort.slug}`
+  const pageTitle = `${escort.stage_name}, ${escort.age} — ${escort.borough_name ?? 'London'} | Bluechips London`
+  const pageDesc = `${escort.stage_name}, ${escort.age} year old companion in ${escort.borough_name ?? 'London'}. ${escort.about_me?.slice(0, 120) ?? ''}`
+  const primaryPhoto = escort.photos.find((p) => p.is_primary)?.url ?? escort.photos[0]?.url
+
+  const personSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'Person',
+    name: escort.stage_name,
+    description: escort.about_me ?? undefined,
+    url: profileUrl,
+    image: primaryPhoto ?? undefined,
+    address: {
+      '@type': 'PostalAddress',
+      addressLocality: escort.borough_name ?? 'London',
+      addressRegion: 'Greater London',
+      addressCountry: 'GB',
+    },
+    ...(escort.rate_1hour ? { offers: { '@type': 'Offer', priceCurrency: 'GBP', price: escort.rate_1hour } } : {}),
+  }
+
+  const breadcrumbSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://bluechips.live/' },
+      { '@type': 'ListItem', position: 2, name: 'Companions', item: 'https://bluechips.live/escorts' },
+      { '@type': 'ListItem', position: 3, name: escort.stage_name, item: profileUrl },
+    ],
+  }
+
   return (
     <Layout>
       <Helmet>
-        <title>{`${escort.stage_name}, ${escort.age} — ${escort.borough_name ?? 'London'} | Bluechips London`}</title>
-        <meta name="description" content={`${escort.stage_name}, ${escort.age} year old companion in ${escort.borough_name ?? 'London'}. ${escort.about_me?.slice(0, 120) ?? ''}`} />
+        <title>{pageTitle}</title>
+        <meta name="description" content={pageDesc} />
+        <link rel="canonical" href={profileUrl} />
+        <meta property="og:type" content="profile" />
+        <meta property="og:title" content={pageTitle} />
+        <meta property="og:description" content={pageDesc} />
+        <meta property="og:url" content={profileUrl} />
+        {primaryPhoto && <meta property="og:image" content={primaryPhoto} />}
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content={pageTitle} />
+        <meta name="twitter:description" content={pageDesc} />
+        {primaryPhoto && <meta name="twitter:image" content={primaryPhoto} />}
+        <script type="application/ld+json">{JSON.stringify(personSchema)}</script>
+        <script type="application/ld+json">{JSON.stringify(breadcrumbSchema)}</script>
       </Helmet>
 
       <div className="page-container py-8">
