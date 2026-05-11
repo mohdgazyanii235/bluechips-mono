@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from pydantic import BaseModel
 
 from app.config import settings
@@ -14,6 +15,7 @@ from app.models.escort import Escort, EscortPhoto
 from app.models.platform_config import PlatformConfig
 from app.models.subscription import Subscription
 from app.models.verification import Verification
+from app.models.webhook_event import WebhookEvent
 from app.routers.deps import get_current_verified_escort
 from app.schemas.common import MessageResponse
 from app.services.email_service import (
@@ -842,8 +844,23 @@ async def stripe_webhook(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid webhook payload")
 
+    event_id = event["id"]
     event_type = event["type"]
     data = event["data"]["object"]
+
+    # Idempotency: record the event ID before processing. ON CONFLICT DO NOTHING
+    # means duplicate deliveries are no-ops. The insert is part of the request
+    # transaction, so if processing fails downstream, the rollback also rolls
+    # back the event_id insertion and Stripe will retry.
+    dedup_stmt = pg_insert(WebhookEvent).values(
+        id=event_id,
+        event_type=event_type,
+        received_at=datetime.utcnow(),
+    ).on_conflict_do_nothing(index_elements=["id"])
+    result = await db.execute(dedup_stmt)
+    if result.rowcount == 0:
+        # Already processed — return 200 so Stripe stops retrying
+        return {"received": True, "duplicate": True}
 
     if event_type == "checkout.session.completed":
         await _handle_checkout_completed(data, db, background_tasks)
@@ -972,7 +989,7 @@ async def _handle_subscription_updated(sub_obj: dict, db: AsyncSession, backgrou
     subscription_id = sub_obj.get("id")
     status = sub_obj.get("status")
     cancel_at_period_end = sub_obj.get("cancel_at_period_end", False)
-    escort_id = sub_obj.get("metadata", {}).get("escort_id")
+    event_customer_id = sub_obj.get("customer")
 
     result = await db.execute(
         select(Subscription).where(Subscription.stripe_subscription_id == subscription_id)
@@ -996,67 +1013,78 @@ async def _handle_subscription_updated(sub_obj: dict, db: AsyncSession, backgrou
     if period_end:
         sub.current_period_end = period_end
 
-    if escort_id:
-        escort_result = await db.execute(select(Escort).where(Escort.id == escort_id))
-        escort = escort_result.scalar_one_or_none()
-        if escort:
-            if period_end:
-                escort.subscription_expires_at = period_end
-            if period_renewed and sub.pending_tier:
-                new_tier = sub.pending_tier
-                escort.subscription_tier = new_tier
-                sub.tier = new_tier
-                sub.pending_tier = None
-                # Auto-grant Blue Tick when pending upgrade becomes active at period renewal
-                if new_tier in ("premium", "elite") and escort.verification_level >= 2:
-                    escort.blue_tick_active = True
-                # Pause profile if photo count exceeds new tier's limit
-                new_photo_limit = _TIER_PHOTO_LIMITS.get(new_tier, 3)
-                from sqlalchemy import func as sqlfunc
-                photo_count_res = await db.execute(
-                    select(sqlfunc.count()).select_from(EscortPhoto).where(EscortPhoto.escort_id == escort.id)
+    # Load escort via our DB FK on the Subscription (NOT from webhook metadata).
+    # Then defence-in-depth verify the Stripe customer matches our stored one.
+    escort_result = await db.execute(select(Escort).where(Escort.id == sub.escort_id))
+    escort = escort_result.scalar_one_or_none()
+    if escort and event_customer_id and escort.stripe_customer_id and escort.stripe_customer_id != event_customer_id:
+        print(f"[SECURITY] subscription.updated customer mismatch for sub {subscription_id}: "
+              f"expected {escort.stripe_customer_id}, got {event_customer_id}")
+        return
+    if escort:
+        if period_end:
+            escort.subscription_expires_at = period_end
+        if period_renewed and sub.pending_tier:
+            new_tier = sub.pending_tier
+            escort.subscription_tier = new_tier
+            sub.tier = new_tier
+            sub.pending_tier = None
+            # Auto-grant Blue Tick when pending upgrade becomes active at period renewal
+            if new_tier in ("premium", "elite") and escort.verification_level >= 2:
+                escort.blue_tick_active = True
+            # Pause profile if photo count exceeds new tier's limit
+            new_photo_limit = _TIER_PHOTO_LIMITS.get(new_tier, 3)
+            from sqlalchemy import func as sqlfunc
+            photo_count_res = await db.execute(
+                select(sqlfunc.count()).select_from(EscortPhoto).where(EscortPhoto.escort_id == escort.id)
+            )
+            photo_count = photo_count_res.scalar() or 0
+            if photo_count > new_photo_limit:
+                escort.is_approved = False
+                background_tasks.add_task(
+                    send_profile_paused_photo_limit,
+                    escort_email=escort.email,
+                    stage_name=escort.stage_name,
+                    current_photos=photo_count,
+                    photo_limit=new_photo_limit,
+                    new_tier=new_tier,
                 )
-                photo_count = photo_count_res.scalar() or 0
-                if photo_count > new_photo_limit:
-                    escort.is_approved = False
-                    background_tasks.add_task(
-                        send_profile_paused_photo_limit,
-                        escort_email=escort.email,
-                        stage_name=escort.stage_name,
-                        current_photos=photo_count,
-                        photo_limit=new_photo_limit,
-                        new_tier=new_tier,
-                    )
 
     await db.flush()
 
 
 async def _handle_subscription_deleted(sub_obj: dict, db: AsyncSession):
     subscription_id = sub_obj.get("id")
-    tier = sub_obj.get("metadata", {}).get("tier")
-    escort_id = sub_obj.get("metadata", {}).get("escort_id")
+    event_customer_id = sub_obj.get("customer")
 
     result = await db.execute(
         select(Subscription).where(Subscription.stripe_subscription_id == subscription_id)
     )
     sub = result.scalar_one_or_none()
-    if sub:
-        sub.status = "cancelled"
-        sub.cancelled_at = datetime.utcnow()
+    if not sub:
+        return
+    sub.status = "cancelled"
+    sub.cancelled_at = datetime.utcnow()
 
-    if escort_id:
-        escort_result = await db.execute(select(Escort).where(Escort.id == escort_id))
-        escort = escort_result.scalar_one_or_none()
-        if escort:
-            if tier == "blue_tick":
-                escort.blue_tick_active = False
-                escort.blue_tick_stripe_subscription_id = None
-                if escort.verification_level >= 3:
-                    escort.verification_level = 2
-            else:
-                escort.subscription_tier = "free"
-                escort.stripe_subscription_id = None
-                escort.subscription_expires_at = None
+    # Use the tier from OUR DB record, not the webhook metadata
+    tier = sub.tier
+
+    escort_result = await db.execute(select(Escort).where(Escort.id == sub.escort_id))
+    escort = escort_result.scalar_one_or_none()
+    if escort and event_customer_id and escort.stripe_customer_id and escort.stripe_customer_id != event_customer_id:
+        print(f"[SECURITY] subscription.deleted customer mismatch for sub {subscription_id}: "
+              f"expected {escort.stripe_customer_id}, got {event_customer_id}")
+        return
+    if escort:
+        if tier == "blue_tick":
+            escort.blue_tick_active = False
+            escort.blue_tick_stripe_subscription_id = None
+            if escort.verification_level >= 3:
+                escort.verification_level = 2
+        else:
+            escort.subscription_tier = "free"
+            escort.stripe_subscription_id = None
+            escort.subscription_expires_at = None
     await db.flush()
 
 

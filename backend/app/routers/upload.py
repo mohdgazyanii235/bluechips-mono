@@ -7,28 +7,10 @@ from app.services.storage_service import upload_image, delete_file
 from app.services.email_service import send_profile_reactivated
 from app.routers.deps import get_current_verified_escort
 from app.schemas.common import MessageResponse
-from app.config import settings
+from app.utils.file_validation import validate_image_upload
 import uuid
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
-
-ALLOWED_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
-MAX_BYTES = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
-
-# Magic byte signatures for supported image types
-_JPEG_SIG = b'\xff\xd8\xff'
-_PNG_SIG = b'\x89PNG\r\n\x1a\n'
-
-
-def _valid_image_magic(data: bytes) -> bool:
-    if data[:3] == _JPEG_SIG:
-        return True
-    if data[:8] == _PNG_SIG:
-        return True
-    # WebP: starts with RIFF....WEBP
-    if len(data) >= 12 and data[:4] == b'RIFF' and data[8:12] == b'WEBP':
-        return True
-    return False
 
 
 @router.post("/photo", status_code=status.HTTP_201_CREATED)
@@ -37,15 +19,8 @@ async def upload_photo(
     escort: Escort = Depends(get_current_verified_escort),
     db: AsyncSession = Depends(get_db),
 ):
-    if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(status_code=400, detail="Only JPEG, PNG and WebP images are accepted")
-
     contents = await file.read()
-    if len(contents) > MAX_BYTES:
-        raise HTTPException(status_code=400, detail=f"Image must be under {settings.MAX_UPLOAD_SIZE_MB}MB")
-
-    if not _valid_image_magic(contents):
-        raise HTTPException(status_code=400, detail="File content does not match a supported image format")
+    validate_image_upload(file, contents, field_name="photo")
 
     result = await db.execute(select(EscortPhoto).where(EscortPhoto.escort_id == escort.id))
     existing_photos = result.scalars().all()

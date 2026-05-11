@@ -3,6 +3,9 @@ Unified storage service.
 Uses local filesystem in development; AWS S3 in production when credentials are set.
 """
 import os
+import time
+import hmac
+import hashlib
 import uuid
 import aiofiles
 from pathlib import Path
@@ -109,11 +112,33 @@ async def delete_file(key_or_url: str) -> None:
                 break
 
 
+def _make_local_signed_url(key: str, expires_in: int = 3600) -> str:
+    """Build an HMAC-signed URL for short-lived access to a local private file.
+
+    The signature binds (key, expiry) to the server's SECRET_KEY so the URL
+    can't be tampered with or replayed past its expiry. The /private/ route in
+    main.py validates the signature and serves the file from disk.
+    """
+    expiry = int(time.time()) + expires_in
+    sig_data = f"{key}|{expiry}".encode("utf-8")
+    sig = hmac.new(settings.SECRET_KEY.encode("utf-8"), sig_data, hashlib.sha256).hexdigest()
+    return f"{settings.BACKEND_URL}/private/{key}?exp={expiry}&sig={sig}"
+
+
+def verify_local_signed_url(key: str, exp: int, sig: str) -> bool:
+    """Constant-time verification of a /private/ URL signature."""
+    if exp < int(time.time()):
+        return False
+    sig_data = f"{key}|{exp}".encode("utf-8")
+    expected = hmac.new(settings.SECRET_KEY.encode("utf-8"), sig_data, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(sig, expected)
+
+
 async def get_signed_url(key: str, expires_in: int = 3600) -> str:
     """Generate a signed URL for accessing a private document.
 
-    For S3: generates a presigned URL valid for `expires_in` seconds.
-    For local: returns the key (admin can access directly from backend).
+    For S3: presigned URL valid for `expires_in` seconds.
+    For local: HMAC-signed URL handled by the /private/ route in main.py.
     """
     if not key:
         return None
@@ -130,6 +155,4 @@ async def get_signed_url(key: str, expires_in: int = 3600) -> str:
             print(f"[SIGNED URL ERROR] {e}")
             return key
     else:
-        # For local storage, return a backend URL that serves the file
-        # The backend can serve private files from /uploads/{key}
-        return f"{settings.BACKEND_URL}/uploads/{key}"
+        return _make_local_signed_url(key, expires_in)

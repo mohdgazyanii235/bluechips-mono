@@ -9,6 +9,7 @@ from app.services.storage_service import upload_document
 from app.services.email_service import send_verification_submitted_to_admin
 from app.routers.deps import get_current_verified_escort, get_current_escort
 from app.schemas.common import MessageResponse
+from app.utils.file_validation import validate_image_upload
 
 router = APIRouter(prefix="/verification", tags=["Verification"])
 
@@ -41,7 +42,9 @@ async def submit_identity_verification(
         raise HTTPException(status_code=400, detail="Verification already submitted and pending review")
 
     id_bytes = await id_document.read()
+    validate_image_upload(id_document, id_bytes, field_name="ID document")
     selfie_bytes = await selfie.read()
+    validate_image_upload(selfie, selfie_bytes, field_name="selfie")
 
     id_key = await upload_document(id_bytes, id_document.filename or "id.jpg")
     selfie_key = await upload_document(selfie_bytes, selfie.filename or "selfie.jpg")
@@ -94,6 +97,7 @@ async def submit_blue_tick(
         raise HTTPException(status_code=400, detail="Blue Tick verification already pending")
 
     selfie_bytes = await match_selfie.read()
+    validate_image_upload(match_selfie, selfie_bytes, field_name="match selfie")
     selfie_key = await upload_document(selfie_bytes, match_selfie.filename or "match_selfie.jpg")
 
     verification = Verification(

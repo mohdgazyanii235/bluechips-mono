@@ -1,14 +1,16 @@
+import os
 import secrets
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from app.config import settings
 from app.database import engine, Base, AsyncSessionLocal
 from app.routers import auth, escorts, boroughs, upload, verification, admin, payments, discounts, pricing, outreach, founding
+from app.services.storage_service import verify_local_signed_url
 
 
 _DEFAULT_PRICES = {
@@ -90,11 +92,18 @@ async def _ensure_admin_exists():
 async def lifespan(app: FastAPI):
     # Validate production security settings
     _DEV_SECRET = "insecure-dev-key-change-in-production"
-    if settings.APP_ENV == "production" and settings.SECRET_KEY == _DEV_SECRET:
-        raise RuntimeError(
-            "FATAL: SECRET_KEY is set to the insecure development default. "
-            "Set a strong random SECRET_KEY in .env before running in production."
-        )
+    if settings.APP_ENV == "production":
+        if settings.SECRET_KEY == _DEV_SECRET:
+            raise RuntimeError(
+                "FATAL: SECRET_KEY is set to the insecure development default. "
+                "Set a strong random SECRET_KEY in .env before running in production."
+            )
+        if not settings.use_s3:
+            raise RuntimeError(
+                "FATAL: S3 (or R2) must be configured in production. "
+                "Verification documents on the local filesystem cannot be served securely. "
+                "Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env."
+            )
 
     for subdir in ["photos", "photos/thumbs", "documents"]:
         Path(settings.LOCAL_UPLOADS_DIR).joinpath(subdir).mkdir(parents=True, exist_ok=True)
@@ -138,10 +147,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve local uploads in development
+# Serve local photo uploads in development.
+# IMPORTANT: only `/uploads/photos/` is mounted publicly — `/uploads/documents/`
+# (verification IDs and selfies) must NEVER be served via this static handler.
+# Admin viewing of documents goes through the signed `/private/` route below.
 uploads_path = Path(settings.LOCAL_UPLOADS_DIR)
-if uploads_path.exists():
-    app.mount("/uploads", StaticFiles(directory=str(uploads_path)), name="uploads")
+photos_path = uploads_path / "photos"
+if photos_path.exists():
+    app.mount("/uploads/photos", StaticFiles(directory=str(photos_path)), name="photos")
+
+
+@app.get("/private/{key:path}", include_in_schema=False)
+async def serve_signed_local_file(key: str, exp: int = Query(...), sig: str = Query(...)):
+    """Serve a private file from local storage via a short-lived HMAC-signed URL.
+
+    Used in development when S3 isn't configured. Production must use S3 and
+    won't hit this endpoint (the lifespan check refuses to start without S3).
+    """
+    if not verify_local_signed_url(key, exp, sig):
+        raise HTTPException(status_code=403, detail="Invalid or expired signed URL")
+
+    # Path traversal defence: ensure the resolved path stays inside the uploads root
+    base = uploads_path.resolve()
+    try:
+        resolved = (uploads_path / key).resolve()
+    except (RuntimeError, OSError):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not str(resolved).startswith(str(base) + os.sep) and resolved != base:
+        raise HTTPException(status_code=403, detail="Path traversal blocked")
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(resolved)
 
 # Routers
 app.include_router(auth.router, prefix="/api")
