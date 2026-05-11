@@ -3,11 +3,11 @@ import string
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func as sqlfunc
+from sqlalchemy import select, update, func as sqlfunc
 from app.database import get_db
 from app.models.escort import Escort
 from app.models.discount import DiscountCode
-from app.models.outreach import OutreachProspect
+from app.models.outreach import OutreachProspect, STATUS_SIGNED_UP
 from app.models.platform_config import PlatformConfig
 from app.schemas.auth import RegisterRequest, LoginRequest, TokenResponse, PasswordChangeRequest
 from app.schemas.common import MessageResponse
@@ -63,13 +63,22 @@ async def register(
         dc = dc_result.scalar_one_or_none()
         if dc and (dc.max_redemptions is None or dc.current_redemptions < dc.max_redemptions):
             discount_code_id = dc.id
-            # If this is a founding-member code (single-use, name prefix matches), mark founding
-            cfg_result = await db.execute(select(PlatformConfig).where(PlatformConfig.id == 1))
-            cfg = cfg_result.scalar_one_or_none()
-            if cfg and cfg.founding_offer_active and code_str.startswith("FM-"):
-                # Check if there's room left
-                if cfg.founding_offer_signups < cfg.founding_offer_limit:
-                    is_founding = True
+            # If this is a founding-member code, atomically try to claim a spot.
+            # The UPDATE-with-WHERE acquires a row lock on platform_config and
+            # re-evaluates the predicate against the latest committed state, which
+            # prevents two concurrent signups from both overshooting the limit
+            # under READ COMMITTED isolation. rowcount == 1 means we got a spot.
+            if code_str.startswith("FM-"):
+                claim_result = await db.execute(
+                    update(PlatformConfig)
+                    .where(
+                        PlatformConfig.id == 1,
+                        PlatformConfig.founding_offer_active == True,
+                        PlatformConfig.founding_offer_signups < PlatformConfig.founding_offer_limit,
+                    )
+                    .values(founding_offer_signups=PlatformConfig.founding_offer_signups + 1)
+                )
+                is_founding = claim_result.rowcount == 1
 
     escort = Escort(
         email=data.email.lower(),
@@ -87,7 +96,7 @@ async def register(
     db.add(escort)
     await db.flush()
 
-    # Link the prospect (if any) and increment founding counter
+    # Link the originating prospect (if any) — counter was already incremented atomically above
     if discount_code_id:
         prospect_result = await db.execute(
             select(OutreachProspect).where(OutreachProspect.discount_code_id == discount_code_id)
@@ -96,13 +105,7 @@ async def register(
         if prospect and not prospect.converted_escort_id:
             prospect.converted_escort_id = escort.id
             prospect.signed_up_at = datetime.utcnow()
-            prospect.status = "signed_up"
-
-        if is_founding:
-            cfg_result = await db.execute(select(PlatformConfig).where(PlatformConfig.id == 1))
-            cfg = cfg_result.scalar_one_or_none()
-            if cfg:
-                cfg.founding_offer_signups += 1
+            prospect.status = STATUS_SIGNED_UP
 
     background_tasks.add_task(send_verification_email, escort.email, escort.stage_name, token)
     return MessageResponse(message="Account created! Please check your email to verify your account.")

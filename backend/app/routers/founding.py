@@ -84,7 +84,11 @@ public_router = APIRouter(prefix="/founding", tags=["Founding Offer Public"])
 async def founding_offer_status(db: AsyncSession = Depends(get_db)):
     """Public, cached endpoint for the landing page counter."""
     cfg = await _get_config(db)
-    return _serialize(cfg)
+    data = _serialize(cfg)
+    # Auto-close to the public when the limit is reached. Admin still sees the raw
+    # active=true on the admin endpoint so they can extend the limit if they want.
+    data["active"] = data["active"] and data["remaining"] > 0
+    return data
 
 
 # ─── Admin endpoints ──────────────────────────────────────────────────────────

@@ -127,8 +127,25 @@ async def _build_stripe_discount(
     duration_months = None
     label = None
 
-    if body.discount_code:
-        code = body.discount_code.strip().upper()
+    # Auto-apply the code attached at signup (e.g. founding-member invite link) if
+    # the user didn't explicitly enter a code. Only applies once — once redeemed
+    # (current_redemptions >= max_redemptions) the auto-apply is silently skipped.
+    effective_discount_code = body.discount_code
+    if not effective_discount_code and not body.referral_code and escort.signup_discount_code_id:
+        auto_result = await db.execute(
+            select(DiscountCode).where(
+                DiscountCode.id == escort.signup_discount_code_id,
+                DiscountCode.is_active == True,
+            )
+        )
+        auto_dc = auto_result.scalar_one_or_none()
+        if auto_dc and (auto_dc.max_redemptions is None or auto_dc.current_redemptions < auto_dc.max_redemptions):
+            # Only auto-apply if the code is valid for the selected tier
+            if not auto_dc.applicable_tiers or body.tier in auto_dc.applicable_tiers:
+                effective_discount_code = auto_dc.code
+
+    if effective_discount_code:
+        code = effective_discount_code.strip().upper()
         result = await db.execute(
             select(DiscountCode).where(DiscountCode.code == code, DiscountCode.is_active == True)
         )
