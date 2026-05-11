@@ -37,6 +37,9 @@ import { AdminVerificationDetailPage } from '@/pages/admin/AdminVerificationDeta
 import { AdminEscortsPage } from '@/pages/admin/AdminEscortsPage'
 import { AdminDiscountsPage } from '@/pages/admin/AdminDiscountsPage'
 import { AdminPricingPage } from '@/pages/admin/AdminPricingPage'
+import { AdminOutreachPage } from '@/pages/admin/AdminOutreachPage'
+import { AdminFoundingOfferPage } from '@/pages/admin/AdminFoundingOfferPage'
+import { FoundingMembersPage } from '@/pages/FoundingMembersPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
@@ -68,6 +71,8 @@ export default function App() {
         <Route path="/admin/escorts" element={<AdminRoute><AdminEscortsPage /></AdminRoute>} />
         <Route path="/admin/discounts" element={<AdminRoute><AdminDiscountsPage /></AdminRoute>} />
         <Route path="/admin/pricing" element={<AdminRoute><AdminPricingPage /></AdminRoute>} />
+        <Route path="/admin/outreach" element={<AdminRoute><AdminOutreachPage /></AdminRoute>} />
+        <Route path="/admin/founding-offer" element={<AdminRoute><AdminFoundingOfferPage /></AdminRoute>} />
 
         {/* Escort-facing site — wrapped in age gate */}
         <Route path="*" element={
@@ -85,6 +90,8 @@ export default function App() {
               <Route path="/privacy" element={<PrivacyPage />} />
               <Route path="/terms" element={<TermsPage />} />
               <Route path="/contact" element={<ContactPage />} />
+              <Route path="/founding-50" element={<FoundingMembersPage />} />
+              <Route path="/founding-members" element={<FoundingMembersPage />} />
               <Route path="/verify-email" element={<VerifyEmailPage />} />
 
               {/* Auth (guests only) */}

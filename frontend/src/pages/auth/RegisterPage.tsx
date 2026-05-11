@@ -1,14 +1,14 @@
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Helmet } from 'react-helmet-async'
 import { motion } from 'framer-motion'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { authApi } from '@/api/auth'
 import { useState } from 'react'
-import { BadgeCheck, Shield, Eye, EyeOff } from 'lucide-react'
+import { BadgeCheck, Shield, Eye, EyeOff, Crown } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const schema = z.object({
@@ -27,6 +27,8 @@ type FormData = z.infer<typeof schema>
 
 export function RegisterPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const inviteCode = (searchParams.get('code') || '').trim().toUpperCase()
   const [showPass, setShowPass] = useState(false)
   const { register, handleSubmit, formState: { errors, isSubmitting }, setError } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -34,7 +36,7 @@ export function RegisterPage() {
 
   const onSubmit = async (data: FormData) => {
     try {
-      await authApi.register(data.email, data.password, data.stage_name)
+      await authApi.register(data.email, data.password, data.stage_name, inviteCode || undefined)
       toast.success('Account created! Check your email to verify.')
       navigate('/login')
     } catch (err: any) {
@@ -91,6 +93,16 @@ export function RegisterPage() {
             <h2 className="font-serif text-3xl text-ivory-100">Create your account</h2>
             <p className="text-stone-500 text-sm">Free to join. No credit card required.</p>
           </div>
+
+          {inviteCode && (
+            <div className="flex items-center gap-3 p-3 rounded-lg border border-gold-400/30 bg-gold-400/5">
+              <Crown className="w-5 h-5 text-gold-400 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-gold-300 text-sm font-medium">Founding code applied</p>
+                <p className="text-stone-500 text-xs font-mono truncate">{inviteCode}</p>
+              </div>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
             <Input

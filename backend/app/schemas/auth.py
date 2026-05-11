@@ -6,6 +6,8 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     stage_name: str
+    # Optional invite/discount code (auto-applied at signup, e.g. from ?code= URL param)
+    invite_code: Optional[str] = None
 
     @field_validator("password")
     @classmethod

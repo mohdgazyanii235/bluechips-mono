@@ -27,8 +27,8 @@ export function ContactPage() {
             <div className="space-y-1">
               <p className="font-medium text-ivory-200">General Enquiries</p>
               <p className="text-stone-500 text-sm">Account support, billing, and general questions</p>
-              <a href="mailto:mohdgazyanii235@gmail.com" className="text-gold-400 hover:text-gold-300 text-sm transition-colors">
-                mohdgazyanii235@gmail.com
+              <a href="mailto:support@bluechips.live" className="text-gold-400 hover:text-gold-300 text-sm transition-colors">
+                support@bluechips.live
               </a>
             </div>
           </div>
@@ -40,8 +40,8 @@ export function ContactPage() {
             <div className="space-y-1">
               <p className="font-medium text-ivory-200">Report a Concern</p>
               <p className="text-stone-500 text-sm">To report content that may be illegal or violate our terms, email us with the subject line "Report"</p>
-              <a href="mailto:mohdgazyanii235@gmail.com?subject=Report" className="text-gold-400 hover:text-gold-300 text-sm transition-colors">
-                mohdgazyanii235@gmail.com
+              <a href="mailto:support@bluechips.live?subject=Report" className="text-gold-400 hover:text-gold-300 text-sm transition-colors">
+                support@bluechips.live
               </a>
             </div>
           </div>

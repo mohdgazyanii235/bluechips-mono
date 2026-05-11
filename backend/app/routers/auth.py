@@ -3,9 +3,12 @@ import string
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func as sqlfunc
 from app.database import get_db
 from app.models.escort import Escort
+from app.models.discount import DiscountCode
+from app.models.outreach import OutreachProspect
+from app.models.platform_config import PlatformConfig
 from app.schemas.auth import RegisterRequest, LoginRequest, TokenResponse, PasswordChangeRequest
 from app.schemas.common import MessageResponse
 from app.utils.security import hash_password, verify_password, create_access_token, generate_verification_token
@@ -48,6 +51,26 @@ async def register(
     token = generate_verification_token()
     token_expiry = datetime.utcnow() + timedelta(hours=24)
     referral_code = await _unique_referral_code(db)
+
+    # Optional: pre-validate invite/discount code so we can attach it at signup
+    discount_code_id = None
+    is_founding = False
+    if data.invite_code:
+        code_str = data.invite_code.strip().upper()
+        dc_result = await db.execute(
+            select(DiscountCode).where(DiscountCode.code == code_str, DiscountCode.is_active == True)
+        )
+        dc = dc_result.scalar_one_or_none()
+        if dc and (dc.max_redemptions is None or dc.current_redemptions < dc.max_redemptions):
+            discount_code_id = dc.id
+            # If this is a founding-member code (single-use, name prefix matches), mark founding
+            cfg_result = await db.execute(select(PlatformConfig).where(PlatformConfig.id == 1))
+            cfg = cfg_result.scalar_one_or_none()
+            if cfg and cfg.founding_offer_active and code_str.startswith("FM-"):
+                # Check if there's room left
+                if cfg.founding_offer_signups < cfg.founding_offer_limit:
+                    is_founding = True
+
     escort = Escort(
         email=data.email.lower(),
         hashed_password=hash_password(data.password),
@@ -57,9 +80,29 @@ async def register(
         email_verification_token_expires_at=token_expiry,
         verification_level=0,
         referral_code=referral_code,
+        signup_discount_code_id=discount_code_id,
+        is_founding_member=is_founding,
+        founding_member_since=datetime.utcnow() if is_founding else None,
     )
     db.add(escort)
     await db.flush()
+
+    # Link the prospect (if any) and increment founding counter
+    if discount_code_id:
+        prospect_result = await db.execute(
+            select(OutreachProspect).where(OutreachProspect.discount_code_id == discount_code_id)
+        )
+        prospect = prospect_result.scalar_one_or_none()
+        if prospect and not prospect.converted_escort_id:
+            prospect.converted_escort_id = escort.id
+            prospect.signed_up_at = datetime.utcnow()
+            prospect.status = "signed_up"
+
+        if is_founding:
+            cfg_result = await db.execute(select(PlatformConfig).where(PlatformConfig.id == 1))
+            cfg = cfg_result.scalar_one_or_none()
+            if cfg:
+                cfg.founding_offer_signups += 1
 
     background_tasks.add_task(send_verification_email, escort.email, escort.stage_name, token)
     return MessageResponse(message="Account created! Please check your email to verify your account.")

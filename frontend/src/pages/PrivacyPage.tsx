@@ -69,7 +69,7 @@ export function PrivacyPage() {
               <li>Object to processing of your data</li>
               <li>Data portability</li>
             </ul>
-            <p>To exercise any of these rights, contact us at <a href="mailto:mohdgazyanii235@gmail.com" className="text-gold-400 hover:text-gold-300">mohdgazyanii235@gmail.com</a>.</p>
+            <p>To exercise any of these rights, contact us at <a href="mailto:support@bluechips.live" className="text-gold-400 hover:text-gold-300">support@bluechips.live</a>.</p>
           </section>
 
           <section className="space-y-4">
@@ -93,8 +93,8 @@ export function PrivacyPage() {
             <h2 className="font-serif text-xl text-ivory-200">8. Contact</h2>
             <p>
               For any privacy-related queries or to exercise your data rights, contact us at:{' '}
-              <a href="mailto:mohdgazyanii235@gmail.com" className="text-gold-400 hover:text-gold-300">
-                mohdgazyanii235@gmail.com
+              <a href="mailto:support@bluechips.live" className="text-gold-400 hover:text-gold-300">
+                support@bluechips.live
               </a>
             </p>
           </section>

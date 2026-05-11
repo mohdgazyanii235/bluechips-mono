@@ -32,5 +32,16 @@ class PlatformConfig(Base):
     stripe_blue_tick_setup_id: Mapped[str] = mapped_column(String(200), default="")
     stripe_blue_tick_monthly_id: Mapped[str] = mapped_column(String(200), default="")
 
+    # Founding offer (admin-editable)
+    founding_offer_active: Mapped[bool] = mapped_column(default=False)
+    founding_offer_limit: Mapped[int] = mapped_column(Integer, default=50)
+    founding_offer_signups: Mapped[int] = mapped_column(Integer, default=0)
+    founding_offer_percent_off: Mapped[int] = mapped_column(Integer, default=100)  # 100 = free
+    founding_offer_duration_months: Mapped[int] = mapped_column(Integer, default=6)
+    founding_offer_tier: Mapped[str] = mapped_column(String(20), default="premium")
+    founding_offer_includes_blue_tick: Mapped[bool] = mapped_column(default=True)
+    founding_offer_lifetime_discount_percent: Mapped[int] = mapped_column(Integer, default=50)
+    founding_offer_badge_label: Mapped[str] = mapped_column(String(50), default="Founding Member")
+
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     updated_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

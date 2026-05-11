@@ -97,8 +97,8 @@ export function TermsPage() {
             <h2 className="font-serif text-xl text-ivory-200">9. Contact</h2>
             <p>
               For any questions regarding these Terms, contact:{' '}
-              <a href="mailto:mohdgazyanii235@gmail.com" className="text-gold-400 hover:text-gold-300">
-                mohdgazyanii235@gmail.com
+              <a href="mailto:support@bluechips.live" className="text-gold-400 hover:text-gold-300">
+                support@bluechips.live
               </a>
             </p>
           </section>

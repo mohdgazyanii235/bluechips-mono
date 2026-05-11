@@ -33,7 +33,10 @@
       "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('whatsapp:', d.get\\('whatsapp_number', 'MISSING'\\), '| phone:', d.get\\('phone_number', 'MISSING'\\), '| profile_type:', d.get\\('profile_type', 'MISSING'\\)\\)\")",
       "Bash(npm run *)",
       "Bash(git add *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(python -c ' *)",
+      "Bash(node node_modules/typescript/bin/tsc --noEmit)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

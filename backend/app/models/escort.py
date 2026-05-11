@@ -115,6 +115,18 @@ class Escort(Base):
     referred_by_code: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     referral_reward_claimed: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Founding member
+    is_founding_member: Mapped[bool] = mapped_column(Boolean, default=False)
+    founding_member_since: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    signup_discount_code_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("discount_codes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # Email drip — when the completion-reminder email was last sent
+    profile_reminder_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     # Stats
     profile_views: Mapped[int] = mapped_column(Integer, default=0)
     contact_clicks: Mapped[int] = mapped_column(Integer, default=0)

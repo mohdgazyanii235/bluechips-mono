@@ -2,8 +2,8 @@ import apiClient from './client'
 import type { TokenResponse } from '@/types/auth'
 
 export const authApi = {
-  register: async (email: string, password: string, stage_name: string) => {
-    const { data } = await apiClient.post('/auth/register', { email, password, stage_name })
+  register: async (email: string, password: string, stage_name: string, invite_code?: string) => {
+    const { data } = await apiClient.post('/auth/register', { email, password, stage_name, invite_code })
     return data
   },
 

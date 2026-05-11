@@ -162,4 +162,112 @@ export const adminApi = {
     const { data } = await adminClient.put('/admin/pricing', payload)
     return data as { message: string }
   },
+
+  // ── Outreach CRM ──────────────────────────────────────────────────────────
+
+  listOutreach: async () => {
+    const { data } = await adminClient.get('/admin/outreach')
+    return data as {
+      counts: Record<string, number>
+      items: Array<OutreachProspect>
+    }
+  },
+
+  bulkUpsertOutreach: async (rows: OutreachRowInput[]) => {
+    const { data } = await adminClient.post('/admin/outreach/bulk-upsert', { rows })
+    return data as {
+      created: number
+      updated: number
+      failures: Array<{ x_handle: string; reason: string }>
+      saved_ids: string[]
+    }
+  },
+
+  updateOutreach: async (id: string, patch: Partial<OutreachRowInput> & { admin_notes?: string }) => {
+    const { data } = await adminClient.patch(`/admin/outreach/${id}`, patch)
+    return data as { message: string }
+  },
+
+  deleteOutreach: async (id: string) => {
+    const { data } = await adminClient.delete(`/admin/outreach/${id}`)
+    return data as { message: string }
+  },
+
+  generateOutreachMessage: async (id: string, regenerate = false) => {
+    const { data } = await adminClient.post(`/admin/outreach/${id}/generate-message`, { regenerate })
+    return data as { message: string; code: string }
+  },
+
+  markOutreachContacted: async (id: string) => {
+    const { data } = await adminClient.post(`/admin/outreach/${id}/mark-contacted`)
+    return data as { message: string }
+  },
+
+  previewProfileCompletionDrip: async (daysOld = 2) => {
+    const { data } = await adminClient.get('/admin/outreach/drip/profile-completion/preview', { params: { days_old: daysOld } })
+    return data as { count: number; items: Array<{ id: string; email: string; stage_name: string; created_at: string; last_reminded_at: string | null }> }
+  },
+
+  sendProfileCompletionDrip: async (daysOld = 2) => {
+    const { data } = await adminClient.post('/admin/outreach/drip/profile-completion/send', null, { params: { days_old: daysOld } })
+    return data as { queued: number; message: string }
+  },
+
+  // ── Founding offer ────────────────────────────────────────────────────────
+
+  getFoundingOffer: async () => {
+    const { data } = await adminClient.get('/admin/founding-offer')
+    return data as FoundingOfferConfig
+  },
+
+  updateFoundingOffer: async (patch: Partial<FoundingOfferConfig>) => {
+    const { data } = await adminClient.put('/admin/founding-offer', patch)
+    return data as { message: string }
+  },
+}
+
+// ── Outreach types ──────────────────────────────────────────────────────────
+
+export interface OutreachProspect {
+  id: string
+  x_handle: string
+  stage_name: string
+  area: string | null
+  specialty: string | null
+  note: string | null
+  status: 'not_contacted' | 'contacted' | 'replied' | 'signed_up' | 'declined'
+  generated_message: string | null
+  admin_notes: string | null
+  discount_code: string | null
+  discount_code_id: string | null
+  converted_escort_id: string | null
+  contacted_at: string | null
+  replied_at: string | null
+  signed_up_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface OutreachRowInput {
+  id?: string
+  x_handle: string
+  stage_name: string
+  area?: string | null
+  specialty?: string | null
+  note?: string | null
+  status?: string
+  admin_notes?: string | null
+}
+
+export interface FoundingOfferConfig {
+  active: boolean
+  limit: number
+  signups: number
+  remaining: number
+  percent_off: number
+  duration_months: number
+  tier: string
+  includes_blue_tick: boolean
+  lifetime_discount_percent: number
+  badge_label: string
 }

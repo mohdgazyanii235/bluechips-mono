@@ -8,7 +8,7 @@ from pathlib import Path
 
 from app.config import settings
 from app.database import engine, Base, AsyncSessionLocal
-from app.routers import auth, escorts, boroughs, upload, verification, admin, payments, discounts, pricing
+from app.routers import auth, escorts, boroughs, upload, verification, admin, payments, discounts, pricing, outreach, founding
 
 
 _DEFAULT_PRICES = {
@@ -153,6 +153,9 @@ app.include_router(admin.router, prefix="/api")
 app.include_router(payments.router, prefix="/api")
 app.include_router(discounts.router, prefix="/api")
 app.include_router(pricing.router, prefix="/api")
+app.include_router(outreach.router, prefix="/api")
+app.include_router(founding.router, prefix="/api")
+app.include_router(founding.public_router, prefix="/api")
 
 
 @app.get("/api/health")

@@ -271,3 +271,36 @@ async def send_verification_denied_to_escort(escort_email: str, escort_stage_nam
     </div>
     """
     return await send_email(escort_email, f"Application Not Approved", html)
+
+
+async def send_profile_completion_reminder(to: str, stage_name: str) -> bool:
+    """Friendly nudge for escorts who verified email but haven't finished their profile."""
+    dashboard_url = f"{settings.FRONTEND_URL}/dashboard/profile"
+    html = f"""
+    <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; background: #0A0A0A; color: #F5F0E8; padding: 40px; border-radius: 8px;">
+        <h1 style="color: #C9A84C; font-size: 28px; margin-bottom: 8px;">Bluechips London</h1>
+        <p style="color: #888; margin-bottom: 32px; font-size: 13px; letter-spacing: 2px; text-transform: uppercase;">Premium Companion Directory</p>
+        <h2 style="font-size: 20px; margin-bottom: 16px;">Your profile is almost ready, {stage_name}.</h2>
+        <p style="line-height: 1.7; color: #ccc; margin-bottom: 20px;">
+            Quick reminder — your Bluechips London profile is set up but not yet complete. To start showing up in client searches, you'll need:
+        </p>
+        <ul style="line-height: 1.9; color: #ccc; margin-bottom: 28px; padding-left: 20px;">
+            <li>Your age and the London borough you work in</li>
+            <li>At least one photo</li>
+            <li>A short about-me description</li>
+            <li>Your hourly rate</li>
+        </ul>
+        <p style="line-height: 1.7; color: #ccc; margin-bottom: 28px;">
+            It takes about five minutes. Once done, you're live and visible to clients across London.
+        </p>
+        <a href="{dashboard_url}"
+           style="display: inline-block; background: #C9A84C; color: #0A0A0A; padding: 14px 32px;
+                  text-decoration: none; font-weight: bold; border-radius: 4px; letter-spacing: 1px;">
+            FINISH MY PROFILE
+        </a>
+        <p style="margin-top: 32px; color: #555; font-size: 12px;">
+            This is an automated reminder. You're receiving it because your Bluechips London profile is incomplete. You can sign in to manage your account at any time.
+        </p>
+    </div>
+    """
+    return await send_email(to, f"{stage_name}, your profile is one step away", html)

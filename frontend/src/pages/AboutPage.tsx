@@ -93,7 +93,7 @@ export function AboutPage() {
             Bluechips London is a technology platform and not the author, publisher, or endorser of any listing content. As a platform intermediary (analogous to Gumtree, Fiverr, or Airbnb), we are not liable for the accuracy of listings or for the conduct, services, or arrangements of the individuals who advertise on our platform. All arrangements are made between clients and companions on a private, direct, and voluntary basis. Users of this platform are solely responsible for ensuring their activities comply with applicable law.
           </p>
           <p className="text-stone-500 text-sm leading-relaxed">
-            To report a profile or illegal content, use the Report button on the relevant listing or contact us at <a href="mailto:mohdgazyanii235@gmail.com" className="text-gold-400 hover:text-gold-300">mohdgazyanii235@gmail.com</a>.
+            To report a profile or illegal content, use the Report button on the relevant listing or contact us at <a href="mailto:support@bluechips.live" className="text-gold-400 hover:text-gold-300">support@bluechips.live</a>.
           </p>
         </div>
       </div>

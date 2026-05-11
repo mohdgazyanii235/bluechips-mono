@@ -310,7 +310,7 @@ export function HomePage() {
     contactPoint: {
       '@type': 'ContactPoint',
       contactType: 'customer support',
-      email: 'mohdgazyanii235@gmail.com',
+      email: 'support@bluechips.live',
     },
     areaServed: { '@type': 'City', name: 'London', addressCountry: 'GB' },
   }
