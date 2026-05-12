@@ -4,7 +4,7 @@ import { Helmet } from 'react-helmet-async'
 import { motion } from 'framer-motion'
 import {
   MapPin, Phone, MessageCircle, Shield, Star, ChevronLeft,
-  Activity, Clock, Eye, AlertTriangle
+  Activity, Clock, Eye, AlertTriangle, Crown
 } from 'lucide-react'
 import { Layout } from '@/components/layout/Layout'
 import { VerificationBadge } from '@/components/escort/VerificationBadge'
@@ -298,6 +298,12 @@ export function EscortProfilePage() {
                   size="md"
                   showLabel
                 />
+                {(escort as any).is_founding_member && (
+                  <Badge variant="gold">
+                    <Crown className="w-3.5 h-3.5" />
+                    Founding Member
+                  </Badge>
+                )}
                 {escort.std_tested && (
                   <Badge variant="std">
                     <Activity className="w-3.5 h-3.5" />

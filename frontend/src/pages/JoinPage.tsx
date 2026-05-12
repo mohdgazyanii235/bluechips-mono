@@ -1,18 +1,53 @@
 import { Link } from 'react-router-dom'
 import { Helmet } from 'react-helmet-async'
 import { motion } from 'framer-motion'
-import { BadgeCheck, ShieldCheck, Eye, Zap, Star, Crown, Check, ChevronRight } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { BadgeCheck, ShieldCheck, Eye, Zap, Star, Crown, Check, ChevronRight, Sparkles } from 'lucide-react'
 import { Layout } from '@/components/layout/Layout'
 import { Button } from '@/components/ui/Button'
+import { apiClient } from '@/api/client'
+import { foundingApi } from '@/api/founding'
 
-const PLANS = [
-  { name: 'Free', price: 0, features: ['3 photos', 'Basic searchable listing', 'Phone & WhatsApp shown', 'Email verification'] },
-  { name: 'Essential', price: 1199, icon: Zap, popular: false, features: ['8 photos', 'Identity verified badge', 'Borough search placement', '"Available now" indicator', '+ All Free features'] },
-  { name: 'Premium', price: 1899, icon: Star, popular: true, features: ['50 photos', 'Featured search placement', 'Blue Tick included free', 'STD tested badge', '+ All Essential features'] },
-  { name: 'Elite', price: 2399, icon: Crown, popular: false, features: ['Homepage rotation', 'Top of all results', 'Elite badge', 'Blue Tick included free', '+ All Premium features'] },
-]
+type Pricing = {
+  essential_monthly_pence: number
+  premium_monthly_pence: number
+  elite_monthly_pence: number
+  blue_tick_setup_pence: number
+  blue_tick_monthly_pence: number
+}
+
+const DEFAULT_PRICING: Pricing = {
+  essential_monthly_pence: 1199,
+  premium_monthly_pence: 1899,
+  elite_monthly_pence: 2399,
+  blue_tick_setup_pence: 1000,
+  blue_tick_monthly_pence: 399,
+}
+
+const fmt = (pence: number) => `£${(pence / 100).toFixed(2)}`
 
 export function JoinPage() {
+  const { data: pricing = DEFAULT_PRICING } = useQuery<Pricing>({
+    queryKey: ['pricing'],
+    queryFn: () => apiClient.get('/pricing').then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const { data: founding } = useQuery({
+    queryKey: ['founding-status'],
+    queryFn: foundingApi.status,
+    refetchInterval: 30_000,
+  })
+
+  const plans = [
+    { name: 'Free', price: 0, features: ['3 photos', 'Basic searchable listing', 'Phone & WhatsApp shown', 'Email verification'] },
+    { name: 'Essential', price: pricing.essential_monthly_pence, icon: Zap, popular: false, features: ['8 photos', 'Identity verified badge', 'Borough search placement', '"Available now" indicator', '+ All Free features'] },
+    { name: 'Premium', price: pricing.premium_monthly_pence, icon: Star, popular: true, features: ['50 photos', 'Featured search placement', 'Blue Tick included free', 'STD tested badge', '+ All Essential features'] },
+    { name: 'Elite', price: pricing.elite_monthly_pence, icon: Crown, popular: false, features: ['Homepage rotation', 'Top of all results', 'Elite badge', 'Blue Tick included free', '+ All Premium features'] },
+  ]
+
+  const foundingActive = founding?.active && founding.remaining > 0
+
   return (
     <Layout>
       <Helmet>
@@ -24,9 +59,15 @@ export function JoinPage() {
       <section className="py-20 text-center">
         <div className="page-container max-w-3xl space-y-6">
           <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-gold-400/20 bg-gold-400/5 text-gold-400 text-xs uppercase tracking-widest">
-              Join 500+ companions
-            </div>
+            {foundingActive && (
+              <Link
+                to="/founding-50"
+                className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-gold-400/30 bg-gold-400/5 text-gold-400 text-xs uppercase tracking-widest hover:bg-gold-400/10 transition-colors"
+              >
+                <Crown className="w-3.5 h-3.5" />
+                Founding {founding.limit} — {founding.remaining} spots left
+              </Link>
+            )}
             <h1 className="font-serif text-5xl lg:text-6xl text-ivory-100 leading-tight">
               Market yourself on<br />
               <span className="gold-text">London's finest</span> directory
@@ -46,6 +87,37 @@ export function JoinPage() {
           </div>
         </div>
       </section>
+
+      {/* Founding counter (only while active) */}
+      {foundingActive && (
+        <section className="pb-8">
+          <div className="page-container max-w-2xl">
+            <Link to="/founding-50" className="block group">
+              <div className="bg-gradient-to-br from-gold-900/20 via-stone-900 to-stone-900 border border-gold-400/20 hover:border-gold-400/40 rounded-2xl p-6 transition-colors">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-lg bg-gold-400/10 border border-gold-400/20 flex items-center justify-center shrink-0">
+                    <Sparkles className="w-5 h-5 text-gold-400" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-xs uppercase tracking-widest text-gold-500 mb-1">Founding Programme</p>
+                    <p className="text-ivory-100 text-sm">
+                      <strong>{founding.signups}/{founding.limit} spots taken.</strong>{' '}
+                      <span className="text-stone-400">First {founding.limit} companions get {founding.duration_months} months free + lifetime discount.</span>
+                    </p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-gold-400 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+                <div className="mt-4 h-2 bg-stone-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-gold-500 to-gold-300 transition-all duration-700"
+                    style={{ width: `${Math.round((founding.signups / Math.max(1, founding.limit)) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            </Link>
+          </div>
+        </section>
+      )}
 
       {/* Why join */}
       <section className="py-16 border-y border-surface-border bg-surface/20">
@@ -79,7 +151,7 @@ export function JoinPage() {
           </div>
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            {PLANS.map((plan, i) => {
+            {plans.map((plan, i) => {
               const Icon = plan.icon
               return (
                 <motion.div
@@ -104,7 +176,7 @@ export function JoinPage() {
                     <h3 className="font-serif text-xl text-ivory-100">{plan.name}</h3>
                     <div className="flex items-baseline gap-1">
                       <span className="font-serif text-3xl text-gold-400">
-                        {plan.price === 0 ? 'Free' : `£${(plan.price / 100).toFixed(2)}`}
+                        {plan.price === 0 ? 'Free' : fmt(plan.price)}
                       </span>
                       {plan.price > 0 && <span className="text-stone-500 text-sm">/mo</span>}
                     </div>

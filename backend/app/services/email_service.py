@@ -5,9 +5,13 @@ from app.config import settings
 
 
 async def send_email(to: str, subject: str, html_body: str) -> bool:
-    if not settings.SMTP_USER:
-        print(f"[DEV] Email to {to}: {subject}")
+    if settings.APP_ENV != "production":
+        print(f"[DEV EMAIL] To: {to} | Subject: {subject}")
         return True
+
+    if not settings.SMTP_USER:
+        print(f"[WARN] SMTP not configured — email to {to} not sent")
+        return False
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject

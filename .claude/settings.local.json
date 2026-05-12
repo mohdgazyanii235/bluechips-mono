@@ -43,7 +43,8 @@
       "Bash(python -c \"import openpyxl; print\\('openpyxl available'\\)\")",
       "Bash(pip install *)",
       "Bash(python docs/testing/generate_test_plan.py)",
-      "Bash(python -c \"import sys; sys.path.insert\\(0, '.'\\); from app.main import app; print\\('OK', len\\(app.routes\\)\\)\")"
+      "Bash(python -c \"import sys; sys.path.insert\\(0, '.'\\); from app.main import app; print\\('OK', len\\(app.routes\\)\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/app/routers/payments.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ]
   }
 }

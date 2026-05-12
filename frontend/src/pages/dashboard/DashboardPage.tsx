@@ -66,7 +66,15 @@ export function DashboardPage() {
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <p className="text-stone-500 text-sm">Welcome back</p>
-            <h1 className="font-serif text-3xl text-ivory-100">{escort.stage_name}</h1>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="font-serif text-3xl text-ivory-100">{escort.stage_name}</h1>
+              {(escort as any).is_founding_member && (
+                <Badge variant="gold">
+                  <Crown className="w-3.5 h-3.5" />
+                  Founding Member
+                </Badge>
+              )}
+            </div>
           </div>
 
           {/* Available Now toggle */}
@@ -227,7 +235,8 @@ export function DashboardPage() {
           <div className="space-y-3">
             {(() => {
               const blueTickSubscribed = !!(escort as any).blue_tick_stripe_subscription_id
-              const blueTickApproved = escort.verification_level >= 3
+              const blueTickActive = !!(escort as any).blue_tick_active
+              const blueTickApproved = escort.verification_level >= 3 || blueTickActive
               const identityApproved = escort.verification_level >= 2
               const identityPending = lastIdentity?.status === 'pending'
               const blueTickPending = blueTickSubscribed && !blueTickApproved && !blueTickRejected

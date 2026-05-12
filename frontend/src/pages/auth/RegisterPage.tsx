@@ -16,6 +16,7 @@ const schema = z.object({
   email: z.string().email('Enter a valid email'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   confirm_password: z.string(),
+  invite_code: z.string().optional(),
   age_confirm: z.literal(true, { errorMap: () => ({ message: 'You must confirm you are 18+' }) }),
   terms: z.literal(true, { errorMap: () => ({ message: 'You must agree to the terms' }) }),
 }).refine((d) => d.password === d.confirm_password, {
@@ -36,7 +37,8 @@ export function RegisterPage() {
 
   const onSubmit = async (data: FormData) => {
     try {
-      await authApi.register(data.email, data.password, data.stage_name, inviteCode || undefined)
+      const codeToUse = (inviteCode || data.invite_code || '').trim().toUpperCase() || undefined
+      await authApi.register(data.email, data.password, data.stage_name, codeToUse)
       toast.success('Account created! Check your email to verify.')
       navigate('/login')
     } catch (err: any) {
@@ -144,6 +146,16 @@ export function RegisterPage() {
               {...register('confirm_password')}
               error={errors.confirm_password?.message}
             />
+
+            {!inviteCode && (
+              <Input
+                label="Invite code (optional)"
+                placeholder="e.g. FM-XXXXXX"
+                hint="Got a founding-member or partner code? Enter it here."
+                autoComplete="off"
+                {...register('invite_code')}
+              />
+            )}
 
             {/* Checkboxes */}
             <div className="space-y-3">

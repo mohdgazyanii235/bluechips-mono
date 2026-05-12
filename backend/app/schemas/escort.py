@@ -32,6 +32,7 @@ class EscortCardOut(BaseModel):
     subscription_tier: str
     verification_level: int
     blue_tick_active: bool = False
+    is_founding_member: bool = False
     available_now: bool
     std_tested: bool
     primary_photo_url: Optional[str]
@@ -70,6 +71,7 @@ class EscortProfileOut(BaseModel):
     subscription_tier: str
     verification_level: int
     blue_tick_active: bool = False
+    is_founding_member: bool = False
     available_now: bool
     profile_views: int
     service_tags: list[str] = []
@@ -170,6 +172,7 @@ class EscortDashboardOut(BaseModel):
     subscription_tier: str
     subscription_expires_at: Optional[datetime]
     blue_tick_active: bool = False
+    is_founding_member: bool = False
     blue_tick_stripe_subscription_id: Optional[str] = None
     stripe_subscription_id: Optional[str] = None
     profile_views: int

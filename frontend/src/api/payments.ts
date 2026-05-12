@@ -73,4 +73,11 @@ export const paymentsApi = {
     const { data } = await apiClient.post('/payments/reactivate-blue-tick')
     return data
   },
+
+  /** Pull current subscription state from Stripe into our DB.
+   *  Used as a fallback when webhooks haven't arrived (e.g. local dev). */
+  syncFromStripe: async (): Promise<{ message: string }> => {
+    const { data } = await apiClient.post('/payments/sync')
+    return data
+  },
 }

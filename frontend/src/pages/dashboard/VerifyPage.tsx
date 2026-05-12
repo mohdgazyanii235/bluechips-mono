@@ -232,6 +232,19 @@ export function VerifyPage() {
     qc.invalidateQueries({ queryKey: ['verification-status'] })
   }
 
+  // After Stripe Checkout redirects back with ?payment=success or ?blue_tick=success,
+  // reconcile our DB with Stripe in case webhooks haven't arrived yet.
+  const [syncing, setSyncing] = useState(false)
+  useEffect(() => {
+    if (paymentSuccess || blueTickStatus === 'success') {
+      setSyncing(true)
+      paymentsApi.syncFromStripe()
+        .then(() => refresh())
+        .catch(() => {})
+        .finally(() => setSyncing(false))
+    }
+  }, [paymentSuccess, blueTickStatus])
+
   const handleIdentitySubmit = async () => {
     if (!idFile || !selfieFile) {
       toast.error('Please take both photos before submitting')

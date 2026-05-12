@@ -138,12 +138,11 @@ async def _ensure_discount_for_prospect(
             return code
 
     new_code_str = await _unique_code(db, prospect.x_handle)
-    tier = cfg.founding_offer_tier or "premium"
     code = DiscountCode(
         code=new_code_str,
         name=f"Founding Member — {prospect.stage_name} (@{prospect.x_handle})",
         percent_off=cfg.founding_offer_percent_off,
-        applicable_tiers=[tier] if tier else [],
+        applicable_tiers=[],  # empty = valid for any paid tier
         duration_months=cfg.founding_offer_duration_months,
         max_redemptions=1,
         current_redemptions=0,

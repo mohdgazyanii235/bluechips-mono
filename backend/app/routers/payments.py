@@ -163,6 +163,36 @@ async def _build_stripe_discount(
         duration_months = dc.duration_months
         label = code
         dc.current_redemptions += 1
+
+        # Founding-member side effects: if this is an FM- code and the escort
+        # isn't already flagged, atomically claim a founding spot, mark the
+        # escort, and link the originating prospect (if any).
+        if code.startswith("FM-") and not escort.is_founding_member:
+            from sqlalchemy import update as sql_update
+            from app.models.outreach import OutreachProspect, STATUS_SIGNED_UP
+            claim_result = await db.execute(
+                sql_update(PlatformConfig)
+                .where(
+                    PlatformConfig.id == 1,
+                    PlatformConfig.founding_offer_active == True,
+                    PlatformConfig.founding_offer_signups < PlatformConfig.founding_offer_limit,
+                )
+                .values(founding_offer_signups=PlatformConfig.founding_offer_signups + 1)
+            )
+            if claim_result.rowcount == 1:
+                escort.is_founding_member = True
+                escort.founding_member_since = datetime.utcnow()
+                if not escort.signup_discount_code_id:
+                    escort.signup_discount_code_id = dc.id
+                prospect_result = await db.execute(
+                    select(OutreachProspect).where(OutreachProspect.discount_code_id == dc.id)
+                )
+                prospect = prospect_result.scalar_one_or_none()
+                if prospect and not prospect.converted_escort_id:
+                    prospect.converted_escort_id = escort.id
+                    prospect.signed_up_at = datetime.utcnow()
+                    prospect.status = STATUS_SIGNED_UP
+
         await db.flush()
 
     elif body.referral_code:
@@ -226,11 +256,8 @@ async def create_checkout_session(
         raise HTTPException(status_code=400, detail="billing must be 'monthly' or 'annual'")
 
     cfg = await _get_platform_config(db)
-    stripe_field = _TIER_STRIPE_FIELD[body.tier][body.billing]
-    price_id = getattr(cfg, stripe_field, "")
-    if not price_id:
-        if body.billing == "annual":
-            raise HTTPException(status_code=503, detail="Annual billing is not yet available. Please select monthly billing.")
+    unit_amount = getattr(cfg, _TIER_PENCE_FIELD[body.tier][body.billing], 0)
+    if not unit_amount or unit_amount <= 0:
         raise HTTPException(status_code=503, detail="Tier price not configured")
 
     # Block if a verification is pending
@@ -267,10 +294,22 @@ async def create_checkout_session(
     anchor_date = _next_month_first() if body.billing == "monthly" else _next_jan_first()
     anchor_ts = _to_unix(anchor_date)
 
+    # Use price_data so platform_config is the SINGLE source of truth for pricing.
+    # The Stripe Dashboard prices may be stale; we override them here.
+    tier_label = body.tier.capitalize()
+    interval = "month" if body.billing == "monthly" else "year"
     session_params: dict = {
         "customer": customer_id,
         "mode": "subscription",
-        "line_items": [{"price": price_id, "quantity": 1}],
+        "line_items": [{
+            "price_data": {
+                "currency": "gbp",
+                "product_data": {"name": f"Bluechips London — {tier_label} ({body.billing.capitalize()})"},
+                "unit_amount": unit_amount,
+                "recurring": {"interval": interval},
+            },
+            "quantity": 1,
+        }],
         "success_url": f"{settings.FRONTEND_URL}/dashboard/verify?payment=success",
         "cancel_url": f"{settings.FRONTEND_URL}/dashboard/subscription?payment=cancelled",
         "metadata": {"escort_id": str(escort.id), "tier": body.tier, "billing": body.billing},
@@ -372,6 +411,121 @@ async def get_upgrade_preview(
         }
 
 
+@router.post("/payments/sync", response_model=MessageResponse)
+async def sync_subscription_from_stripe(
+    escort: Escort = Depends(get_current_verified_escort),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Reconcile this escort's subscription state from Stripe.
+    Called after Stripe Checkout redirects back to the app, as a fallback for
+    when webhooks haven't arrived yet (or aren't reachable, e.g. on localhost).
+    """
+    if not escort.stripe_customer_id:
+        return MessageResponse(message="No Stripe customer — nothing to sync")
+
+    client = _stripe_client()
+    subs = client.subscriptions.list(params={
+        "customer": escort.stripe_customer_id,
+        "status": "all",
+        "limit": 20,
+    })
+
+    found_main = False
+    found_blue_tick = False
+    for sub_obj in subs.data:
+        status = sub_obj["status"]
+        if status not in ("active", "trialing", "past_due"):
+            continue
+
+        sub_id = sub_obj["id"]
+        meta_tier = (sub_obj.get("metadata") or {}).get("tier", "")
+        is_blue_tick = meta_tier == "blue_tick"
+
+        # If metadata doesn't say blue_tick, treat as the main subscription
+        if is_blue_tick:
+            if found_blue_tick:
+                continue
+            found_blue_tick = True
+        else:
+            if found_main:
+                continue
+            found_main = True
+
+        period_start = datetime.utcfromtimestamp(sub_obj["current_period_start"]) if sub_obj.get("current_period_start") else None
+        period_end = datetime.utcfromtimestamp(sub_obj["current_period_end"]) if sub_obj.get("current_period_end") else None
+        item = sub_obj["items"]["data"][0] if sub_obj["items"]["data"] else None
+        price_id = item["price"]["id"] if item else None
+        amount = item["price"]["unit_amount"] if item else None
+
+        # Upsert the Subscription record. Use .first() in case duplicates
+        # already exist (from a prior race) — we treat the newest as canonical
+        # and leave older ones alone.
+        existing_result = await db.execute(
+            select(Subscription)
+            .where(Subscription.stripe_subscription_id == sub_id)
+            .order_by(Subscription.created_at.desc())
+        )
+        existing = existing_result.scalars().first()
+
+        local_status = "cancelling" if sub_obj.get("cancel_at_period_end") else "active"
+
+        if existing:
+            existing.status = local_status
+            existing.current_period_start = period_start
+            existing.current_period_end = period_end
+        else:
+            # Mark any previously-active sub of the same type as replaced
+            old_filter = [
+                Subscription.escort_id == escort.id,
+                Subscription.status == "active",
+            ]
+            if is_blue_tick:
+                old_filter.append(Subscription.tier == "blue_tick")
+            else:
+                old_filter.append(Subscription.tier != "blue_tick")
+            old_subs_result = await db.execute(select(Subscription).where(*old_filter))
+            for old_sub in old_subs_result.scalars():
+                old_sub.status = "replaced"
+
+            db.add(Subscription(
+                escort_id=escort.id,
+                tier="blue_tick" if is_blue_tick else (meta_tier or "essential"),
+                status=local_status,
+                stripe_subscription_id=sub_id,
+                stripe_price_id=price_id,
+                amount_gbp=amount,
+                current_period_start=period_start,
+                current_period_end=period_end,
+            ))
+
+        # Update escort
+        if is_blue_tick:
+            escort.blue_tick_stripe_subscription_id = sub_id
+            # blue_tick_active only flips True after admin approval — don't set it here
+            # but ensure a pending Verification(level=3) exists
+            existing_v = await db.execute(
+                select(Verification).where(
+                    Verification.escort_id == escort.id,
+                    Verification.level == 3,
+                    Verification.status == "pending",
+                )
+            )
+            if not existing_v.scalar_one_or_none() and not escort.blue_tick_active:
+                db.add(Verification(escort_id=escort.id, level=3, status="pending"))
+        else:
+            if meta_tier in ("essential", "premium", "elite"):
+                escort.subscription_tier = meta_tier
+            escort.stripe_subscription_id = sub_id
+            escort.subscription_expires_at = period_end
+            # Premium/Elite include Blue Tick free — auto-grant if identity already verified.
+            if meta_tier in ("premium", "elite") and escort.verification_level >= 2:
+                escort.blue_tick_active = True
+
+    await db.flush()
+    return MessageResponse(message="Subscription state synced from Stripe")
+
+
 @router.get("/payments/subscription")
 async def get_subscription(
     escort: Escort = Depends(get_current_verified_escort),
@@ -461,7 +615,9 @@ async def create_blue_tick_checkout(
         raise HTTPException(status_code=400, detail="You already have an active Blue Tick subscription")
 
     cfg = await _get_platform_config(db)
-    if not cfg.stripe_blue_tick_monthly_id or not cfg.stripe_blue_tick_setup_id:
+    setup_pence = cfg.blue_tick_setup_pence or 0
+    monthly_pence = cfg.blue_tick_monthly_pence or 0
+    if setup_pence <= 0 or monthly_pence <= 0:
         raise HTTPException(status_code=503, detail="Blue Tick pricing not configured")
 
     client = _stripe_client()
@@ -484,8 +640,23 @@ async def create_blue_tick_checkout(
         "customer": customer_id,
         "mode": "subscription",
         "line_items": [
-            {"price": cfg.stripe_blue_tick_monthly_id, "quantity": 1},
-            {"price": cfg.stripe_blue_tick_setup_id, "quantity": 1},
+            {
+                "price_data": {
+                    "currency": "gbp",
+                    "product_data": {"name": "Bluechips London — Blue Tick Verified"},
+                    "unit_amount": monthly_pence,
+                    "recurring": {"interval": "month"},
+                },
+                "quantity": 1,
+            },
+            {
+                "price_data": {
+                    "currency": "gbp",
+                    "product_data": {"name": "Blue Tick — Setup Fee"},
+                    "unit_amount": setup_pence,
+                },
+                "quantity": 1,
+            },
         ],
         "subscription_data": {
             "metadata": {"escort_id": str(escort.id), "tier": "blue_tick"},
@@ -524,11 +695,8 @@ async def upgrade_tier(
         raise HTTPException(status_code=400, detail="No active subscription found. Use the checkout flow to subscribe.")
 
     cfg = await _get_platform_config(db)
-    stripe_field = _TIER_STRIPE_FIELD[body.tier][body.billing]
-    price_id = getattr(cfg, stripe_field, "")
-    if not price_id:
-        if body.billing == "annual":
-            raise HTTPException(status_code=503, detail="Annual billing is not yet available. Please select monthly billing.")
+    unit_amount = getattr(cfg, _TIER_PENCE_FIELD[body.tier][body.billing], 0)
+    if not unit_amount or unit_amount <= 0:
         raise HTTPException(status_code=503, detail="Tier price not configured")
 
     client = _stripe_client()
@@ -542,19 +710,29 @@ async def upgrade_tier(
         raise HTTPException(status_code=400, detail="Subscription has no items")
 
     item_id = sub["items"]["data"][0]["id"]
-    current_price_id = sub["items"]["data"][0]["price"]["id"]
+    current_interval_check = sub["items"]["data"][0]["price"].get("recurring", {}).get("interval", "month")
+    current_billing = "annual" if current_interval_check == "year" else "monthly"
 
-    if current_price_id == price_id:
+    if escort.subscription_tier == body.tier and current_billing == body.billing:
         raise HTTPException(status_code=400, detail="You are already on this plan with this billing period")
 
     is_downgrade = TIER_ORDER.get(body.tier, 0) < TIER_ORDER.get(escort.subscription_tier, 0)
+
+    tier_label = body.tier.capitalize()
+    new_interval = "month" if body.billing == "monthly" else "year"
+    new_price_data = {
+        "currency": "gbp",
+        "product_data": {"name": f"Bluechips London — {tier_label} ({body.billing.capitalize()})"},
+        "unit_amount": unit_amount,
+        "recurring": {"interval": new_interval},
+    }
 
     if is_downgrade:
         # Downgrade: switch price at next renewal — no immediate charge.
         client.subscriptions.update(
             escort.stripe_subscription_id,
             params={
-                "items": [{"id": item_id, "price": price_id}],
+                "items": [{"id": item_id, "price_data": new_price_data}],
                 "proration_behavior": "none",
                 "metadata": {"escort_id": str(escort.id), "tier": body.tier, "billing": body.billing},
             },
@@ -569,7 +747,7 @@ async def upgrade_tier(
         sub_record = sub_result.scalar_one_or_none()
         if sub_record:
             sub_record.pending_tier = body.tier
-            sub_record.stripe_price_id = price_id
+            sub_record.stripe_price_id = None
         await db.flush()
 
         # Send photo warning email if escort has more photos than new tier allows
@@ -664,7 +842,7 @@ async def upgrade_tier(
     client.subscriptions.update(
         escort.stripe_subscription_id,
         params={
-            "items": [{"id": item_id, "price": price_id}],
+            "items": [{"id": item_id, "price_data": new_price_data}],
             "proration_behavior": "none",
             "metadata": {"escort_id": str(escort.id), "tier": body.tier, "billing": body.billing},
         },
@@ -679,7 +857,7 @@ async def upgrade_tier(
     sub_record = sub_result.scalar_one_or_none()
     if sub_record:
         sub_record.tier = body.tier
-        sub_record.stripe_price_id = price_id
+        sub_record.stripe_price_id = None
         sub_record.pending_tier = None
 
     escort.subscription_tier = body.tier
@@ -688,7 +866,6 @@ async def upgrade_tier(
         escort.blue_tick_active = True
     await db.flush()
 
-    tier_label = body.tier.capitalize()
     return MessageResponse(message=f"Successfully upgraded to {tier_label}!")
 
 
@@ -982,6 +1159,9 @@ async def _handle_checkout_completed(session: dict, db: AsyncSession, background
     escort.subscription_tier = tier
     escort.stripe_subscription_id = subscription_id
     escort.subscription_expires_at = period_end
+    # Premium/Elite include Blue Tick free — auto-grant if identity already verified.
+    if tier in ("premium", "elite") and escort.verification_level >= 2:
+        escort.blue_tick_active = True
     await db.flush()
 
 
