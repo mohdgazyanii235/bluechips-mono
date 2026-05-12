@@ -90,20 +90,12 @@ async def _ensure_admin_exists():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Validate production security settings
     _DEV_SECRET = "insecure-dev-key-change-in-production"
-    if settings.APP_ENV == "production":
-        if settings.SECRET_KEY == _DEV_SECRET:
-            raise RuntimeError(
-                "FATAL: SECRET_KEY is set to the insecure development default. "
-                "Set a strong random SECRET_KEY in .env before running in production."
-            )
-        if not settings.use_s3:
-            raise RuntimeError(
-                "FATAL: S3 (or R2) must be configured in production. "
-                "Verification documents on the local filesystem cannot be served securely. "
-                "Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env."
-            )
+    if settings.APP_ENV == "production" and settings.SECRET_KEY == _DEV_SECRET:
+        raise RuntimeError(
+            "FATAL: SECRET_KEY is set to the insecure development default. "
+            "Set a strong random SECRET_KEY in .env before running in production."
+        )
 
     for subdir in ["photos", "photos/thumbs", "documents"]:
         Path(settings.LOCAL_UPLOADS_DIR).joinpath(subdir).mkdir(parents=True, exist_ok=True)
