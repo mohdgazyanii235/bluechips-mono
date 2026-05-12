@@ -39,7 +39,11 @@
       "Bash(git commit -m ' *)",
       "PowerShell(gh pr list 2>&1)",
       "Bash(git log *)",
-      "Bash(git remote *)"
+      "Bash(git remote *)",
+      "Bash(python -c \"import openpyxl; print\\('openpyxl available'\\)\")",
+      "Bash(pip install *)",
+      "Bash(python docs/testing/generate_test_plan.py)",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, '.'\\); from app.main import app; print\\('OK', len\\(app.routes\\)\\)\")"
     ]
   }
 }
