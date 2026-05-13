@@ -75,16 +75,32 @@ export function AdminFoundingOfferPage() {
               <p className="font-serif text-3xl text-ivory-100 mt-1">{form.signups} / {form.limit}</p>
               <p className="text-stone-500 text-sm">{remaining} spots remaining · {form.active ? 'Live' : 'Hidden'}</p>
             </div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <span className="text-stone-400 text-sm">Active</span>
+            <div className="flex items-center gap-3">
+              <span className={`text-sm font-medium transition-colors ${form.active ? 'text-gold-400' : 'text-stone-500'}`}>
+                {form.active ? 'Active' : 'Inactive'}
+              </span>
               <button
                 type="button"
+                role="switch"
+                aria-checked={form.active}
+                aria-label="Toggle founding offer active"
                 onClick={() => setField('active', !form.active)}
-                className={`relative w-11 h-6 rounded-full transition-colors ${form.active ? 'bg-gold-400' : 'bg-stone-700'}`}
+                className={`
+                  relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center
+                  rounded-full border-2 border-transparent transition-colors duration-200
+                  focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-400 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-900
+                  ${form.active ? 'bg-gold-400' : 'bg-stone-700'}
+                `}
               >
-                <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-black transition-transform ${form.active ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                <span
+                  className={`
+                    pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md
+                    transition-transform duration-200 ease-in-out
+                    ${form.active ? 'translate-x-5' : 'translate-x-0'}
+                  `}
+                />
               </button>
-            </label>
+            </div>
           </div>
           <div className="h-2 bg-stone-800 rounded-full overflow-hidden">
             <div className="h-full bg-gradient-to-r from-gold-500 to-gold-400 transition-all" style={{ width: `${percentFilled}%` }} />

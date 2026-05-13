@@ -44,7 +44,11 @@
       "Bash(pip install *)",
       "Bash(python docs/testing/generate_test_plan.py)",
       "Bash(python -c \"import sys; sys.path.insert\\(0, '.'\\); from app.main import app; print\\('OK', len\\(app.routes\\)\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/app/routers/payments.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/app/routers/payments.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(dir E:\\\\projects\\\\BluechipsLondon *)",
+      "Bash(git commit *)",
+      "Bash(python -c \"from PIL import Image; print\\('PIL available'\\)\")",
+      "Bash(python)"
     ]
   }
 }
