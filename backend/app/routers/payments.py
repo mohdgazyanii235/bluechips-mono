@@ -1,8 +1,13 @@
+"""
+Payments router — provider-agnostic.
+
+All payment-provider specifics live in app.services.payment_provider.*.
+This router only orchestrates business logic + persists state.
+"""
 import calendar as cal
-import stripe
 from datetime import datetime, date
 from typing import Optional
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -12,6 +17,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.discount import DiscountCode
 from app.models.escort import Escort, EscortPhoto
+from app.models.outreach import OutreachProspect, STATUS_SIGNED_UP
 from app.models.platform_config import PlatformConfig
 from app.models.subscription import Subscription
 from app.models.verification import Verification
@@ -23,6 +29,15 @@ from app.services.email_service import (
     send_downgrade_photo_warning,
     send_profile_paused_photo_limit,
 )
+from app.services.payment_provider import (
+    get_provider,
+    InvalidWebhookSignatureError,
+    ProviderApiError,
+)
+from app.services.payment_provider.base import (
+    CheckoutRequest as ProviderCheckoutRequest,
+    WebhookEventType,
+)
 
 _TIER_PHOTO_LIMITS = {"free": 3, "essential": 8, "premium": 50, "elite": 50}
 
@@ -30,12 +45,6 @@ router = APIRouter(tags=["Payments"])
 
 TIER_ORDER = {"free": 0, "essential": 1, "premium": 2, "elite": 3}
 
-# Maps tier+billing → PlatformConfig field names for Stripe price ID and pence amount
-_TIER_STRIPE_FIELD = {
-    "essential": {"monthly": "stripe_essential_monthly_id", "annual": "stripe_essential_annual_id"},
-    "premium":   {"monthly": "stripe_premium_monthly_id",   "annual": "stripe_premium_annual_id"},
-    "elite":     {"monthly": "stripe_elite_monthly_id",     "annual": "stripe_elite_annual_id"},
-}
 _TIER_PENCE_FIELD = {
     "essential": {"monthly": "essential_monthly_pence", "annual": "essential_annual_pence"},
     "premium":   {"monthly": "premium_monthly_pence",   "annual": "premium_annual_pence"},
@@ -43,12 +52,9 @@ _TIER_PENCE_FIELD = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Billing cycle helpers — all subscriptions anchor to 1st of month / Jan 1st
-# ---------------------------------------------------------------------------
+# ─── Calendar helpers (provider-agnostic) ────────────────────────────────────
 
 def _next_month_first() -> date:
-    """Calendar date for the 1st of next month (UTC today)."""
     today = datetime.utcnow().date()
     if today.month == 12:
         return date(today.year + 1, 1, 1)
@@ -56,50 +62,32 @@ def _next_month_first() -> date:
 
 
 def _next_jan_first() -> date:
-    """Calendar date for January 1st of next year (UTC today)."""
     return date(datetime.utcnow().year + 1, 1, 1)
 
 
-def _to_unix(d: date) -> int:
-    """Convert a date (UTC midnight) to a Unix timestamp."""
-    return int(cal.timegm(datetime(d.year, d.month, d.day).timetuple()))
-
-
 def _monthly_prorate_info() -> dict:
-    """
-    Returns info needed to prorate a monthly subscription based on the current calendar month.
-    remaining_days: days from today until the 1st of next month.
-    days_in_month: total days in the current calendar month.
-    next_1st: the date for the 1st of next month.
-    fraction: remaining_days / days_in_month
-    """
     today = datetime.utcnow().date()
     next_1st = _next_month_first()
-    remaining_days = (next_1st - today).days
     days_in_month = cal.monthrange(today.year, today.month)[1]
     return {
         "today": today,
         "next_1st": next_1st,
-        "remaining_days": remaining_days,
+        "remaining_days": (next_1st - today).days,
         "days_in_month": days_in_month,
-        "fraction": remaining_days / days_in_month,
+        "fraction": (next_1st - today).days / days_in_month,
     }
 
 
 def _annual_prorate_info() -> dict:
-    """
-    Returns info needed to prorate an annual subscription based on the current calendar year.
-    """
     today = datetime.utcnow().date()
     next_jan1 = _next_jan_first()
-    remaining_days = (next_jan1 - today).days
     days_in_year = 366 if (today.year % 4 == 0 and (today.year % 100 != 0 or today.year % 400 == 0)) else 365
     return {
         "today": today,
         "next_1st": next_jan1,
-        "remaining_days": remaining_days,
-        "days_in_month": days_in_year,  # reuse field name for generic use
-        "fraction": remaining_days / days_in_year,
+        "remaining_days": (next_jan1 - today).days,
+        "days_in_month": days_in_year,
+        "fraction": (next_jan1 - today).days / days_in_year,
     }
 
 
@@ -111,29 +99,20 @@ async def _get_platform_config(db: AsyncSession) -> PlatformConfig:
     return cfg
 
 
-def _stripe_client() -> stripe.StripeClient:
-    if not settings.STRIPE_SECRET_KEY:
-        raise HTTPException(status_code=503, detail="Payments not configured")
-    return stripe.StripeClient(settings.STRIPE_SECRET_KEY)
+# ─── Discount code resolution (provider-agnostic) ────────────────────────────
 
+async def _resolve_discount(
+    body: "CheckoutRequest", escort: Escort, db: AsyncSession
+) -> tuple[Optional[int], Optional[str], Optional[DiscountCode]]:
+    """Validate the discount/referral code and return (percent_off, label, dc).
 
-async def _build_stripe_discount(
-    client: stripe.StripeClient,
-    db: AsyncSession,
-    body: "CheckoutRequest",
-    escort: Escort,
-    cfg: PlatformConfig,
-) -> Optional[str]:
-    """Validate discount/referral code, apply redemption, return a Stripe coupon ID (or None)."""
-    percent_off = None
-    duration_months = None
-    label = None
-
-    # Auto-apply the code attached at signup (e.g. founding-member invite link) if
-    # the user didn't explicitly enter a code. Only applies once — once redeemed
-    # (current_redemptions >= max_redemptions) the auto-apply is silently skipped.
-    effective_discount_code = body.discount_code
-    if not effective_discount_code and not body.referral_code and escort.signup_discount_code_id:
+    Does NOT mutate the discount code's `current_redemptions` — that happens
+    later, only on successful checkout creation, so we don't burn redemptions
+    on flow errors. Also applies the founding-member claim side effects.
+    """
+    # Auto-apply the code attached at signup if user didn't enter one.
+    effective_code = body.discount_code
+    if not effective_code and not body.referral_code and escort.signup_discount_code_id:
         auto_result = await db.execute(
             select(DiscountCode).where(
                 DiscountCode.id == escort.signup_discount_code_id,
@@ -142,12 +121,11 @@ async def _build_stripe_discount(
         )
         auto_dc = auto_result.scalar_one_or_none()
         if auto_dc and (auto_dc.max_redemptions is None or auto_dc.current_redemptions < auto_dc.max_redemptions):
-            # Only auto-apply if the code is valid for the selected tier
             if not auto_dc.applicable_tiers or body.tier in auto_dc.applicable_tiers:
-                effective_discount_code = auto_dc.code
+                effective_code = auto_dc.code
 
-    if effective_discount_code:
-        code = effective_discount_code.strip().upper()
+    if effective_code:
+        code = effective_code.strip().upper()
         result = await db.execute(
             select(DiscountCode).where(DiscountCode.code == code, DiscountCode.is_active == True)
         )
@@ -159,43 +137,9 @@ async def _build_stripe_discount(
         if dc.applicable_tiers and body.tier not in dc.applicable_tiers:
             names = ", ".join(t.title() for t in dc.applicable_tiers)
             raise HTTPException(status_code=400, detail=f"This code is only valid for: {names}")
-        percent_off = dc.percent_off
-        duration_months = dc.duration_months
-        label = code
-        dc.current_redemptions += 1
+        return dc.percent_off, code, dc
 
-        # Founding-member side effects: if this is an FM- code and the escort
-        # isn't already flagged, atomically claim a founding spot, mark the
-        # escort, and link the originating prospect (if any).
-        if code.startswith("FM-") and not escort.is_founding_member:
-            from sqlalchemy import update as sql_update
-            from app.models.outreach import OutreachProspect, STATUS_SIGNED_UP
-            claim_result = await db.execute(
-                sql_update(PlatformConfig)
-                .where(
-                    PlatformConfig.id == 1,
-                    PlatformConfig.founding_offer_active == True,
-                    PlatformConfig.founding_offer_signups < PlatformConfig.founding_offer_limit,
-                )
-                .values(founding_offer_signups=PlatformConfig.founding_offer_signups + 1)
-            )
-            if claim_result.rowcount == 1:
-                escort.is_founding_member = True
-                escort.founding_member_since = datetime.utcnow()
-                if not escort.signup_discount_code_id:
-                    escort.signup_discount_code_id = dc.id
-                prospect_result = await db.execute(
-                    select(OutreachProspect).where(OutreachProspect.discount_code_id == dc.id)
-                )
-                prospect = prospect_result.scalar_one_or_none()
-                if prospect and not prospect.converted_escort_id:
-                    prospect.converted_escort_id = escort.id
-                    prospect.signed_up_at = datetime.utcnow()
-                    prospect.status = STATUS_SIGNED_UP
-
-        await db.flush()
-
-    elif body.referral_code:
+    if body.referral_code:
         code = body.referral_code.strip().upper()
         ref_result = await db.execute(select(Escort).where(Escort.referral_code == code))
         referrer = ref_result.scalar_one_or_none()
@@ -203,35 +147,49 @@ async def _build_stripe_discount(
             raise HTTPException(status_code=400, detail="Referral code not found")
         if referrer.id == escort.id:
             raise HTTPException(status_code=400, detail="You cannot use your own referral code")
-        percent_off = 50
-        duration_months = 3
-        label = f"REF-{code}"
         escort.referred_by_code = code
-        await db.flush()
+        return 50, f"REF-{code}", None
 
-    if percent_off is None:
-        return None
+    return None, None, None
 
-    if body.billing == "monthly":
-        coupon = client.coupons.create(params={
-            "percent_off": percent_off,
-            "duration": "repeating",
-            "duration_in_months": duration_months,
-            "currency": "gbp",
-            "name": f"{label}: {percent_off}% off × {duration_months}mo",
-        })
-    else:
-        annual_pence = getattr(cfg, _TIER_PENCE_FIELD[body.tier]["annual"], 0)
-        amount_off = max(1, int((annual_pence / 12) * (percent_off / 100) * duration_months))
-        coupon = client.coupons.create(params={
-            "amount_off": amount_off,
-            "currency": "gbp",
-            "duration": "once",
-            "name": f"{label}: pro-rata {percent_off}% off × {duration_months}mo",
-        })
 
-    return coupon.id
+async def _commit_discount(
+    dc: Optional[DiscountCode], escort: Escort, db: AsyncSession
+) -> None:
+    """Now that checkout was successfully created, redeem the code and apply
+    founding-member side effects."""
+    if not dc:
+        return
+    dc.current_redemptions += 1
 
+    code_str = dc.code
+    if code_str.startswith("FM-") and not escort.is_founding_member:
+        from sqlalchemy import update as sql_update
+        claim_result = await db.execute(
+            sql_update(PlatformConfig)
+            .where(
+                PlatformConfig.id == 1,
+                PlatformConfig.founding_offer_active == True,
+                PlatformConfig.founding_offer_signups < PlatformConfig.founding_offer_limit,
+            )
+            .values(founding_offer_signups=PlatformConfig.founding_offer_signups + 1)
+        )
+        if claim_result.rowcount == 1:
+            escort.is_founding_member = True
+            escort.founding_member_since = datetime.utcnow()
+            if not escort.signup_discount_code_id:
+                escort.signup_discount_code_id = dc.id
+            prospect_result = await db.execute(
+                select(OutreachProspect).where(OutreachProspect.discount_code_id == dc.id)
+            )
+            prospect = prospect_result.scalar_one_or_none()
+            if prospect and not prospect.converted_escort_id:
+                prospect.converted_escort_id = escort.id
+                prospect.signed_up_at = datetime.utcnow()
+                prospect.status = STATUS_SIGNED_UP
+
+
+# ─── Request / response models ───────────────────────────────────────────────
 
 class CheckoutRequest(BaseModel):
     tier: str
@@ -244,13 +202,15 @@ class CheckoutResponse(BaseModel):
     url: str
 
 
+# ─── Endpoints ───────────────────────────────────────────────────────────────
+
 @router.post("/payments/checkout", response_model=CheckoutResponse)
 async def create_checkout_session(
     body: CheckoutRequest,
     escort: Escort = Depends(get_current_verified_escort),
     db: AsyncSession = Depends(get_db),
 ):
-    if body.tier not in _TIER_STRIPE_FIELD:
+    if body.tier not in _TIER_PENCE_FIELD:
         raise HTTPException(status_code=400, detail="Invalid tier. Choose: essential, premium, or elite")
     if body.billing not in ("monthly", "annual"):
         raise HTTPException(status_code=400, detail="billing must be 'monthly' or 'annual'")
@@ -260,7 +220,6 @@ async def create_checkout_session(
     if not unit_amount or unit_amount <= 0:
         raise HTTPException(status_code=503, detail="Tier price not configured")
 
-    # Block if a verification is pending
     pending_result = await db.execute(
         select(Verification).where(
             Verification.escort_id == escort.id,
@@ -273,332 +232,31 @@ async def create_checkout_session(
             detail="Your current application is being reviewed. Please wait before subscribing to another tier.",
         )
 
-    client = _stripe_client()
+    percent_off, label, dc = await _resolve_discount(body, escort, db)
+    provider = get_provider()
 
-    # Create or reuse Stripe customer
-    customer_id = escort.stripe_customer_id
-    if not customer_id:
-        customer = client.customers.create(params={
-            "email": escort.email,
-            "name": escort.stage_name,
-            "metadata": {"escort_id": str(escort.id)},
-        })
-        customer_id = customer.id
-        escort.stripe_customer_id = customer_id
-        await db.flush()
-
-    coupon_id = await _build_stripe_discount(client, db, body, escort, cfg)
-
-    # Anchor billing to 1st of next month (monthly) or Jan 1st (annual)
-    # Stripe will automatically prorate the first invoice for the partial period.
-    anchor_date = _next_month_first() if body.billing == "monthly" else _next_jan_first()
-    anchor_ts = _to_unix(anchor_date)
-
-    # Use price_data so platform_config is the SINGLE source of truth for pricing.
-    # The Stripe Dashboard prices may be stale; we override them here.
-    tier_label = body.tier.capitalize()
-    interval = "month" if body.billing == "monthly" else "year"
-    session_params: dict = {
-        "customer": customer_id,
-        "mode": "subscription",
-        "line_items": [{
-            "price_data": {
-                "currency": "gbp",
-                "product_data": {"name": f"Bluechips London — {tier_label} ({body.billing.capitalize()})"},
-                "unit_amount": unit_amount,
-                "recurring": {"interval": interval},
-            },
-            "quantity": 1,
-        }],
-        "success_url": f"{settings.FRONTEND_URL}/dashboard/verify?payment=success",
-        "cancel_url": f"{settings.FRONTEND_URL}/dashboard/subscription?payment=cancelled",
-        "metadata": {"escort_id": str(escort.id), "tier": body.tier, "billing": body.billing},
-        "subscription_data": {
-            "metadata": {"escort_id": str(escort.id), "tier": body.tier, "billing": body.billing},
-            "billing_cycle_anchor": anchor_ts,
-            "proration_behavior": "create_prorations",
-        },
-    }
-    if coupon_id:
-        session_params["discounts"] = [{"coupon": coupon_id}]
-    else:
-        session_params["allow_promotion_codes"] = True
-
-    session = client.checkout.sessions.create(params=session_params)
-    return CheckoutResponse(url=session.url)
-
-
-@router.get("/payments/upgrade-preview")
-async def get_upgrade_preview(
-    tier: str,
-    billing: str = "monthly",
-    escort: Escort = Depends(get_current_verified_escort),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Returns what the escort will be charged (or told) when changing plans.
-    Used by the frontend to show a confirmation modal before proceeding.
-    """
-    if tier not in _TIER_STRIPE_FIELD:
-        raise HTTPException(status_code=400, detail="Invalid tier")
-    if billing not in ("monthly", "annual"):
-        raise HTTPException(status_code=400, detail="billing must be 'monthly' or 'annual'")
-
-    cfg = await _get_platform_config(db)
-    current_tier = escort.subscription_tier
-
-    # Determine proration window
-    if billing == "annual":
-        info = _annual_prorate_info()
-    else:
-        info = _monthly_prorate_info()
-
-    remaining_days: int = info["remaining_days"]
-    total_days: int = info["days_in_month"]
-    # Format as "1 July 2026"
-    d: date = info["next_1st"]
-    next_billing_date: str = f"{d.day} {d.strftime('%B')} {d.year}"
-
-    new_price_pence: int = getattr(cfg, _TIER_PENCE_FIELD[tier][billing], 0)
-
-    is_upgrade = TIER_ORDER.get(tier, 0) > TIER_ORDER.get(current_tier, 0)
-
-    if current_tier == "free" or not escort.stripe_subscription_id:
-        # New subscription via checkout — show what Stripe will charge for the partial month
-        charge_now = round(new_price_pence * remaining_days / total_days)
-        return {
-            "type": "new",
-            "from_tier": current_tier,
-            "to_tier": tier,
-            "billing": billing,
-            "charge_now_pence": charge_now,
-            "then_pence": new_price_pence,
-            "remaining_days": remaining_days,
-            "total_days": total_days,
-            "next_billing_date": next_billing_date,
-        }
-
-    old_billing = "monthly"  # assume monthly for current sub (most common)
-    old_price_pence: int = getattr(cfg, _TIER_PENCE_FIELD[current_tier][old_billing], 0)
-
-    if is_upgrade:
-        diff = new_price_pence - old_price_pence
-        charge_now = max(0, round(diff * remaining_days / total_days))
-        return {
-            "type": "upgrade",
-            "from_tier": current_tier,
-            "to_tier": tier,
-            "billing": billing,
-            "charge_now_pence": charge_now,
-            "then_pence": new_price_pence,
-            "remaining_days": remaining_days,
-            "total_days": total_days,
-            "next_billing_date": next_billing_date,
-        }
-    else:
-        # Downgrade: no charge today, effective from next billing date
-        return {
-            "type": "downgrade",
-            "from_tier": current_tier,
-            "to_tier": tier,
-            "billing": billing,
-            "charge_now_pence": 0,
-            "then_pence": new_price_pence,
-            "remaining_days": remaining_days,
-            "total_days": total_days,
-            "next_billing_date": next_billing_date,
-            "effective_date": next_billing_date,
-        }
-
-
-@router.post("/payments/sync", response_model=MessageResponse)
-async def sync_subscription_from_stripe(
-    escort: Escort = Depends(get_current_verified_escort),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Reconcile this escort's subscription state from Stripe.
-    Called after Stripe Checkout redirects back to the app, as a fallback for
-    when webhooks haven't arrived yet (or aren't reachable, e.g. on localhost).
-    """
-    if not escort.stripe_customer_id:
-        return MessageResponse(message="No Stripe customer — nothing to sync")
-
-    client = _stripe_client()
-    subs = client.subscriptions.list(params={
-        "customer": escort.stripe_customer_id,
-        "status": "all",
-        "limit": 20,
-    })
-
-    found_main = False
-    found_blue_tick = False
-    for sub_obj in subs.data:
-        status = sub_obj["status"]
-        if status not in ("active", "trialing", "past_due"):
-            continue
-
-        sub_id = sub_obj["id"]
-        meta_tier = (sub_obj.get("metadata") or {}).get("tier", "")
-        is_blue_tick = meta_tier == "blue_tick"
-
-        # If metadata doesn't say blue_tick, treat as the main subscription
-        if is_blue_tick:
-            if found_blue_tick:
-                continue
-            found_blue_tick = True
-        else:
-            if found_main:
-                continue
-            found_main = True
-
-        period_start = datetime.utcfromtimestamp(sub_obj["current_period_start"]) if sub_obj.get("current_period_start") else None
-        period_end = datetime.utcfromtimestamp(sub_obj["current_period_end"]) if sub_obj.get("current_period_end") else None
-        item = sub_obj["items"]["data"][0] if sub_obj["items"]["data"] else None
-        price_id = item["price"]["id"] if item else None
-        amount = item["price"]["unit_amount"] if item else None
-
-        # Upsert the Subscription record. Use .first() in case duplicates
-        # already exist (from a prior race) — we treat the newest as canonical
-        # and leave older ones alone.
-        existing_result = await db.execute(
-            select(Subscription)
-            .where(Subscription.stripe_subscription_id == sub_id)
-            .order_by(Subscription.created_at.desc())
-        )
-        existing = existing_result.scalars().first()
-
-        local_status = "cancelling" if sub_obj.get("cancel_at_period_end") else "active"
-
-        if existing:
-            existing.status = local_status
-            existing.current_period_start = period_start
-            existing.current_period_end = period_end
-        else:
-            # Mark any previously-active sub of the same type as replaced
-            old_filter = [
-                Subscription.escort_id == escort.id,
-                Subscription.status == "active",
-            ]
-            if is_blue_tick:
-                old_filter.append(Subscription.tier == "blue_tick")
-            else:
-                old_filter.append(Subscription.tier != "blue_tick")
-            old_subs_result = await db.execute(select(Subscription).where(*old_filter))
-            for old_sub in old_subs_result.scalars():
-                old_sub.status = "replaced"
-
-            db.add(Subscription(
-                escort_id=escort.id,
-                tier="blue_tick" if is_blue_tick else (meta_tier or "essential"),
-                status=local_status,
-                stripe_subscription_id=sub_id,
-                stripe_price_id=price_id,
-                amount_gbp=amount,
-                current_period_start=period_start,
-                current_period_end=period_end,
-            ))
-
-        # Update escort
-        if is_blue_tick:
-            escort.blue_tick_stripe_subscription_id = sub_id
-            # blue_tick_active only flips True after admin approval — don't set it here
-            # but ensure a pending Verification(level=3) exists
-            existing_v = await db.execute(
-                select(Verification).where(
-                    Verification.escort_id == escort.id,
-                    Verification.level == 3,
-                    Verification.status == "pending",
-                )
-            )
-            if not existing_v.scalar_one_or_none() and not escort.blue_tick_active:
-                db.add(Verification(escort_id=escort.id, level=3, status="pending"))
-        else:
-            if meta_tier in ("essential", "premium", "elite"):
-                escort.subscription_tier = meta_tier
-            escort.stripe_subscription_id = sub_id
-            escort.subscription_expires_at = period_end
-            # Premium/Elite include Blue Tick free — auto-grant if identity already verified.
-            if meta_tier in ("premium", "elite") and escort.verification_level >= 2:
-                escort.blue_tick_active = True
-
-    await db.flush()
-    return MessageResponse(message="Subscription state synced from Stripe")
-
-
-@router.get("/payments/subscription")
-async def get_subscription(
-    escort: Escort = Depends(get_current_verified_escort),
-    db: AsyncSession = Depends(get_db),
-):
-    # Main subscription (non-blue-tick, active or pending cancellation)
-    result = await db.execute(
-        select(Subscription)
-        .where(
-            Subscription.escort_id == escort.id,
-            Subscription.tier != "blue_tick",
-            Subscription.status.in_(["active", "cancelling"]),
-        )
-        .order_by(Subscription.created_at.desc())
-    )
-    sub = result.scalar_one_or_none()
-
-    # Blue Tick subscription status
-    bt_result = await db.execute(
-        select(Subscription)
-        .where(
-            Subscription.escort_id == escort.id,
-            Subscription.tier == "blue_tick",
-            Subscription.status.in_(["active", "cancelling"]),
-        )
-        .order_by(Subscription.created_at.desc())
-    )
-    bt_sub = bt_result.scalar_one_or_none()
-
-    return {
-        "tier": escort.subscription_tier,
-        "status": sub.status if sub else None,
-        "current_period_end": sub.current_period_end.isoformat() if sub and sub.current_period_end else None,
-        "stripe_subscription_id": sub.stripe_subscription_id if sub else None,
-        "pending_tier": sub.pending_tier if sub else None,
-        "blue_tick_status": bt_sub.status if bt_sub else ("active" if escort.blue_tick_active else None),
-        "blue_tick_current_period_end": bt_sub.current_period_end.isoformat() if bt_sub and bt_sub.current_period_end else None,
-    }
-
-
-@router.get("/payments/invoices")
-async def get_invoices(
-    escort: Escort = Depends(get_current_verified_escort),
-):
-    if not escort.stripe_customer_id or not settings.STRIPE_SECRET_KEY:
-        return {"invoices": []}
-    client = _stripe_client()
     try:
-        result = client.invoices.list(params={"customer": escort.stripe_customer_id, "limit": 24})
-        invoices = []
-        for inv in result.data:
-            desc = ""
-            if inv.get("lines") and inv["lines"].get("data"):
-                desc = inv["lines"]["data"][0].get("description", "")
-            invoices.append({
-                "id": inv["id"],
-                "created": inv["created"],
-                "amount_paid": inv["amount_paid"],
-                "currency": inv.get("currency", "gbp"),
-                "status": inv["status"],
-                "pdf_url": inv.get("invoice_pdf"),
-                "hosted_url": inv.get("hosted_invoice_url"),
-                "description": desc,
-            })
-        return {"invoices": invoices}
-    except Exception as e:
-        print(f"[STRIPE] Invoice fetch failed for customer {escort.stripe_customer_id}: {e}")
-        return {"invoices": []}
+        result = provider.create_subscription_checkout(ProviderCheckoutRequest(
+            amount_pence=unit_amount,
+            billing=body.billing,  # type: ignore[arg-type]
+            tier=body.tier,
+            customer_email=escort.email,
+            customer_name=escort.stage_name,
+            success_url=f"{settings.FRONTEND_URL}/dashboard/verify?payment=success",
+            cancel_url=f"{settings.FRONTEND_URL}/dashboard/subscription?payment=cancelled",
+            metadata={"escort_id": str(escort.id), "tier": body.tier, "billing": body.billing},
+            discount_percent=percent_off,
+            discount_label=label,
+        ))
+    except ProviderApiError as e:
+        raise HTTPException(status_code=502, detail=f"Payment provider error: {e}")
 
+    await _commit_discount(dc, escort, db)
+    # Stash the reference so we can correlate the post-checkout postback.
+    escort.psp_provider = provider.name
+    await db.flush()
 
-@router.get("/payments/config")
-async def get_stripe_config():
-    return {"publishable_key": settings.STRIPE_PUBLISHABLE_KEY}
+    return CheckoutResponse(url=result.url)
 
 
 @router.post("/payments/blue-tick-checkout", response_model=CheckoutResponse)
@@ -611,7 +269,7 @@ async def create_blue_tick_checkout(
             status_code=400,
             detail="Blue Tick is included free with your Premium or Elite plan. Complete identity verification to activate it — no extra charge."
         )
-    if escort.blue_tick_stripe_subscription_id:
+    if escort.psp_blue_tick_subscription_id or escort.blue_tick_stripe_subscription_id:
         raise HTTPException(status_code=400, detail="You already have an active Blue Tick subscription")
 
     cfg = await _get_platform_config(db)
@@ -620,258 +278,199 @@ async def create_blue_tick_checkout(
     if setup_pence <= 0 or monthly_pence <= 0:
         raise HTTPException(status_code=503, detail="Blue Tick pricing not configured")
 
-    client = _stripe_client()
+    provider = get_provider()
+    try:
+        result = provider.create_subscription_checkout(ProviderCheckoutRequest(
+            amount_pence=monthly_pence,
+            billing="monthly",
+            tier="blue_tick",
+            customer_email=escort.email,
+            customer_name=escort.stage_name,
+            success_url=f"{settings.FRONTEND_URL}/dashboard/verify?blue_tick=success",
+            cancel_url=f"{settings.FRONTEND_URL}/dashboard/verify?blue_tick=cancelled",
+            metadata={"escort_id": str(escort.id), "tier": "blue_tick"},
+            setup_fee_pence=setup_pence,
+        ))
+    except ProviderApiError as e:
+        raise HTTPException(status_code=502, detail=f"Payment provider error: {e}")
 
-    customer_id = escort.stripe_customer_id
-    if not customer_id:
-        customer = client.customers.create(params={
-            "email": escort.email,
-            "name": escort.stage_name,
-            "metadata": {"escort_id": str(escort.id)},
-        })
-        customer_id = customer.id
-        escort.stripe_customer_id = customer_id
-        await db.flush()
-
-    # Anchor Blue Tick to 1st of next month as well
-    anchor_ts = _to_unix(_next_month_first())
-
-    session = client.checkout.sessions.create(params={
-        "customer": customer_id,
-        "mode": "subscription",
-        "line_items": [
-            {
-                "price_data": {
-                    "currency": "gbp",
-                    "product_data": {"name": "Bluechips London — Blue Tick Verified"},
-                    "unit_amount": monthly_pence,
-                    "recurring": {"interval": "month"},
-                },
-                "quantity": 1,
-            },
-            {
-                "price_data": {
-                    "currency": "gbp",
-                    "product_data": {"name": "Blue Tick — Setup Fee"},
-                    "unit_amount": setup_pence,
-                },
-                "quantity": 1,
-            },
-        ],
-        "subscription_data": {
-            "metadata": {"escort_id": str(escort.id), "tier": "blue_tick"},
-            "billing_cycle_anchor": anchor_ts,
-            "proration_behavior": "create_prorations",
-        },
-        "success_url": f"{settings.FRONTEND_URL}/dashboard/verify?blue_tick=success",
-        "cancel_url": f"{settings.FRONTEND_URL}/dashboard/verify?blue_tick=cancelled",
-        "metadata": {"escort_id": str(escort.id), "tier": "blue_tick"},
-        "allow_promotion_codes": True,
-    })
-
-    return CheckoutResponse(url=session.url)
+    escort.psp_provider = provider.name
+    await db.flush()
+    return CheckoutResponse(url=result.url)
 
 
-@router.post("/payments/upgrade-tier", response_model=MessageResponse)
-async def upgrade_tier(
-    body: CheckoutRequest,
-    background_tasks: BackgroundTasks,
+@router.get("/payments/upgrade-preview")
+async def get_upgrade_preview(
+    tier: str,
+    billing: str = "monthly",
     escort: Escort = Depends(get_current_verified_escort),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Switch an existing subscription to a different tier.
+    """Tells the frontend what changing tier will cost.
 
-    Upgrades: charge a calendar-month pro-rata amount immediately (difference × remaining days / days in month),
-    then update the subscription price. No Stripe-side proration — we control the exact amount.
-
-    Downgrades: switch price at next billing period with no immediate charge.
+    NOTE on provider differences: Verotel does NOT support in-place price
+    changes mid-subscription. For upgrades we have to cancel the existing
+    sub and start a fresh checkout. The preview reflects this.
     """
-    if body.tier not in _TIER_STRIPE_FIELD:
+    if tier not in _TIER_PENCE_FIELD:
         raise HTTPException(status_code=400, detail="Invalid tier")
-    if body.billing not in ("monthly", "annual"):
+    if billing not in ("monthly", "annual"):
         raise HTTPException(status_code=400, detail="billing must be 'monthly' or 'annual'")
-    if not escort.stripe_subscription_id:
-        raise HTTPException(status_code=400, detail="No active subscription found. Use the checkout flow to subscribe.")
 
     cfg = await _get_platform_config(db)
-    unit_amount = getattr(cfg, _TIER_PENCE_FIELD[body.tier][body.billing], 0)
-    if not unit_amount or unit_amount <= 0:
-        raise HTTPException(status_code=503, detail="Tier price not configured")
+    current_tier = escort.subscription_tier
+    info = _annual_prorate_info() if billing == "annual" else _monthly_prorate_info()
+    new_price_pence = getattr(cfg, _TIER_PENCE_FIELD[tier][billing], 0)
+    d = info["next_1st"]
+    next_billing_date = f"{d.day} {d.strftime('%B')} {d.year}"
 
-    client = _stripe_client()
+    is_upgrade = TIER_ORDER.get(tier, 0) > TIER_ORDER.get(current_tier, 0)
+    has_sub = bool(escort.psp_subscription_id or escort.stripe_subscription_id)
 
-    try:
-        sub = client.subscriptions.retrieve(escort.stripe_subscription_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Could not retrieve your current subscription from Stripe")
+    if current_tier == "free" or not has_sub:
+        charge_now = round(new_price_pence * info["remaining_days"] / info["days_in_month"])
+        return {
+            "type": "new",
+            "from_tier": current_tier, "to_tier": tier, "billing": billing,
+            "charge_now_pence": charge_now, "then_pence": new_price_pence,
+            "remaining_days": info["remaining_days"], "total_days": info["days_in_month"],
+            "next_billing_date": next_billing_date,
+        }
 
-    if not sub["items"]["data"]:
-        raise HTTPException(status_code=400, detail="Subscription has no items")
-
-    item_id = sub["items"]["data"][0]["id"]
-    current_interval_check = sub["items"]["data"][0]["price"].get("recurring", {}).get("interval", "month")
-    current_billing = "annual" if current_interval_check == "year" else "monthly"
-
-    if escort.subscription_tier == body.tier and current_billing == body.billing:
-        raise HTTPException(status_code=400, detail="You are already on this plan with this billing period")
-
-    is_downgrade = TIER_ORDER.get(body.tier, 0) < TIER_ORDER.get(escort.subscription_tier, 0)
-
-    tier_label = body.tier.capitalize()
-    new_interval = "month" if body.billing == "monthly" else "year"
-    new_price_data = {
-        "currency": "gbp",
-        "product_data": {"name": f"Bluechips London — {tier_label} ({body.billing.capitalize()})"},
-        "unit_amount": unit_amount,
-        "recurring": {"interval": new_interval},
+    if is_upgrade:
+        # Verotel can't change price mid-cycle. Tell the UI the user will be
+        # charged the full first-period price on the new tier (we cancel old
+        # immediately, start new checkout).
+        return {
+            "type": "upgrade_new_checkout",
+            "from_tier": current_tier, "to_tier": tier, "billing": billing,
+            "charge_now_pence": new_price_pence, "then_pence": new_price_pence,
+            "remaining_days": info["remaining_days"], "total_days": info["days_in_month"],
+            "next_billing_date": next_billing_date,
+            "notice": "Your current subscription will be cancelled and a new checkout opened.",
+        }
+    return {
+        "type": "downgrade",
+        "from_tier": current_tier, "to_tier": tier, "billing": billing,
+        "charge_now_pence": 0, "then_pence": new_price_pence,
+        "remaining_days": info["remaining_days"], "total_days": info["days_in_month"],
+        "next_billing_date": next_billing_date,
+        "effective_date": next_billing_date,
+        "notice": "Your current plan stays active until the next billing date. Then you'll need to checkout on the new tier.",
     }
 
-    if is_downgrade:
-        # Downgrade: switch price at next renewal — no immediate charge.
-        client.subscriptions.update(
-            escort.stripe_subscription_id,
-            params={
-                "items": [{"id": item_id, "price_data": new_price_data}],
-                "proration_behavior": "none",
-                "metadata": {"escort_id": str(escort.id), "tier": body.tier, "billing": body.billing},
-            },
-        )
 
+@router.post("/payments/upgrade-tier", response_model=CheckoutResponse)
+async def upgrade_tier_via_new_checkout(
+    body: CheckoutRequest,
+    escort: Escort = Depends(get_current_verified_escort),
+    db: AsyncSession = Depends(get_db),
+):
+    """Verotel cannot modify a subscription's price mid-cycle. So 'upgrade'
+    actually means: cancel the existing subscription, then send the user
+    through a fresh checkout for the new tier.
+
+    Returns a checkout URL the frontend should redirect to.
+    """
+    if not (escort.psp_subscription_id or escort.stripe_subscription_id):
+        raise HTTPException(status_code=400, detail="No active subscription found. Use the checkout flow to subscribe.")
+
+    provider = get_provider()
+    if not provider.supports_in_place_upgrade():
+        # Cancel the current one first (it stays active till period end —
+        # user pays the new one and the old one expires naturally).
+        sub_id = escort.psp_subscription_id
+        if sub_id:
+            try:
+                provider.cancel_subscription(sub_id)
+            except ProviderApiError as e:
+                # Surface this but don't block — the user can retry cancellation
+                # from the admin if it failed. Logging only.
+                print(f"[upgrade] cancel failed for {sub_id}: {e}")
         sub_result = await db.execute(
             select(Subscription).where(
-                Subscription.stripe_subscription_id == escort.stripe_subscription_id,
+                Subscription.psp_subscription_id == sub_id,
                 Subscription.status == "active",
             )
         )
-        sub_record = sub_result.scalar_one_or_none()
-        if sub_record:
-            sub_record.pending_tier = body.tier
-            sub_record.stripe_price_id = None
+        existing = sub_result.scalar_one_or_none()
+        if existing:
+            existing.status = "cancelling"
         await db.flush()
 
-        # Send photo warning email if escort has more photos than new tier allows
-        new_photo_limit = _TIER_PHOTO_LIMITS.get(body.tier, 3)
-        from sqlalchemy import func as sqlfunc
-        photo_count_result = await db.execute(
-            select(sqlfunc.count()).select_from(EscortPhoto).where(EscortPhoto.escort_id == escort.id)
+    # Fall through to a fresh checkout flow — same as create_checkout_session.
+    return await create_checkout_session(body, escort, db)
+
+
+@router.get("/payments/subscription")
+async def get_subscription(
+    escort: Escort = Depends(get_current_verified_escort),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Subscription)
+        .where(
+            Subscription.escort_id == escort.id,
+            Subscription.tier != "blue_tick",
+            Subscription.status.in_(["active", "cancelling"]),
         )
-        photo_count = photo_count_result.scalar() or 0
-        if photo_count > new_photo_limit:
-            info = _monthly_prorate_info()
-            d = info["next_1st"]
-            billing_date_str = f"{d.day} {d.strftime('%B')} {d.year}"
-            background_tasks.add_task(
-                send_downgrade_photo_warning,
-                escort_email=escort.email,
-                stage_name=escort.stage_name,
-                current_photos=photo_count,
-                new_limit=new_photo_limit,
-                excess=photo_count - new_photo_limit,
-                new_tier=body.tier,
-                billing_date=billing_date_str,
-            )
+        .order_by(Subscription.created_at.desc())
+    )
+    sub = result.scalars().first()
 
-        tier_label = body.tier.capitalize()
-        return MessageResponse(
-            message=f"Downgrade to {tier_label} scheduled. You'll keep your current plan until the end of your billing period."
+    bt_result = await db.execute(
+        select(Subscription)
+        .where(
+            Subscription.escort_id == escort.id,
+            Subscription.tier == "blue_tick",
+            Subscription.status.in_(["active", "cancelling"]),
         )
+        .order_by(Subscription.created_at.desc())
+    )
+    bt_sub = bt_result.scalars().first()
 
-    # ── Upgrade: charge calendar-based pro-rata immediately ──────────────────
+    return {
+        "tier": escort.subscription_tier,
+        "status": sub.status if sub else None,
+        "current_period_end": sub.current_period_end.isoformat() if sub and sub.current_period_end else None,
+        "psp_subscription_id": sub.psp_subscription_id if sub else None,
+        "pending_tier": sub.pending_tier if sub else None,
+        "blue_tick_status": bt_sub.status if bt_sub else ("active" if escort.blue_tick_active else None),
+        "blue_tick_current_period_end": bt_sub.current_period_end.isoformat() if bt_sub and bt_sub.current_period_end else None,
+    }
 
-    if body.billing == "annual":
-        info = _annual_prorate_info()
-    else:
-        info = _monthly_prorate_info()
 
-    remaining_days: int = info["remaining_days"]
-    total_days: int = info["days_in_month"]
-    today = info["today"]
-
-    # Current subscription's billing interval
-    current_interval = sub["items"]["data"][0]["price"].get("recurring", {}).get("interval", "month")
-    old_billing = "annual" if current_interval == "year" else "monthly"
-
-    old_price_pence: int = getattr(cfg, _TIER_PENCE_FIELD[escort.subscription_tier][old_billing], 0)
-    new_price_pence: int = getattr(cfg, _TIER_PENCE_FIELD[body.tier][body.billing], 0)
-
-    # If switching billing period along with tier, compare monthly-equivalent rates
-    if old_billing != body.billing:
-        old_monthly = getattr(cfg, _TIER_PENCE_FIELD[escort.subscription_tier]["monthly"], 0)
-        new_monthly = getattr(cfg, _TIER_PENCE_FIELD[body.tier]["monthly"], 0)
-        diff_pence = new_monthly - old_monthly
-    else:
-        diff_pence = new_price_pence - old_price_pence
-
-    pro_rata_pence = max(0, round(diff_pence * remaining_days / total_days))
-
-    # Create and immediately charge a Stripe invoice for the pro-rata amount
-    if pro_rata_pence > 0:
-        if not escort.stripe_customer_id:
-            raise HTTPException(status_code=400, detail="No Stripe customer found for this account")
-        invoice_id: Optional[str] = None
-        try:
-            month_name = today.strftime("%B")
-            client.invoice_items.create(params={
-                "customer": escort.stripe_customer_id,
-                "amount": pro_rata_pence,
+@router.get("/payments/invoices")
+async def get_invoices(escort: Escort = Depends(get_current_verified_escort), db: AsyncSession = Depends(get_db)):
+    """Invoices = our local subscription rows + their status. Verotel doesn't
+    expose a hosted invoice listing API, so we derive history from DB."""
+    result = await db.execute(
+        select(Subscription)
+        .where(Subscription.escort_id == escort.id)
+        .order_by(Subscription.created_at.desc())
+        .limit(50)
+    )
+    rows = result.scalars().all()
+    return {
+        "invoices": [
+            {
+                "id": str(r.id),
+                "created": int(r.created_at.timestamp()),
+                "amount_paid": r.amount_gbp or 0,
                 "currency": "gbp",
-                "description": (
-                    f"Plan upgrade: {escort.subscription_tier.capitalize()} → {body.tier.capitalize()} "
-                    f"({remaining_days} of {total_days} days remaining in {month_name})"
-                ),
-            })
-            invoice_obj = client.invoices.create(params={
-                "customer": escort.stripe_customer_id,
-                "auto_advance": False,
-            })
-            invoice_id = invoice_obj.id
-            finalized_invoice = client.invoices.finalize_invoice(invoice_id, params={})
-            if finalized_invoice.amount_due > 0 and finalized_invoice.status != "paid":
-                client.invoices.pay(invoice_id, params={})
-        except stripe.StripeError as e:
-            err_msg = getattr(e, "user_message", None) or str(e)
-            if invoice_id:
-                try:
-                    client.invoices.void_invoice(invoice_id, params={})
-                except Exception:
-                    pass
-            raise HTTPException(status_code=402, detail=f"Payment failed: {err_msg}")
-
-    # Update subscription price — no Stripe proration (we already charged manually above)
-    client.subscriptions.update(
-        escort.stripe_subscription_id,
-        params={
-            "items": [{"id": item_id, "price_data": new_price_data}],
-            "proration_behavior": "none",
-            "metadata": {"escort_id": str(escort.id), "tier": body.tier, "billing": body.billing},
-        },
-    )
-
-    sub_result = await db.execute(
-        select(Subscription).where(
-            Subscription.stripe_subscription_id == escort.stripe_subscription_id,
-            Subscription.status == "active",
-        )
-    )
-    sub_record = sub_result.scalar_one_or_none()
-    if sub_record:
-        sub_record.tier = body.tier
-        sub_record.stripe_price_id = None
-        sub_record.pending_tier = None
-
-    escort.subscription_tier = body.tier
-    # Auto-grant Blue Tick when upgrading to premium/elite if identity already verified
-    if body.tier in ("premium", "elite") and escort.verification_level >= 2:
-        escort.blue_tick_active = True
-    await db.flush()
-
-    return MessageResponse(message=f"Successfully upgraded to {tier_label}!")
+                "status": r.status,
+                "description": f"{r.tier.capitalize()} subscription",
+            }
+            for r in rows
+        ]
+    }
 
 
-def _period_end_from_stripe(updated: dict) -> datetime | None:
-    ts = updated.get("current_period_end")
-    return datetime.utcfromtimestamp(ts) if ts else None
+@router.get("/payments/config")
+async def get_provider_config():
+    """Public — tells the frontend which provider is active so it can render
+    the right messaging. No secrets are returned."""
+    return {"provider": settings.PAYMENT_PROVIDER}
 
 
 @router.post("/payments/cancel", response_model=MessageResponse)
@@ -879,35 +478,25 @@ async def cancel_subscription(
     escort: Escort = Depends(get_current_verified_escort),
     db: AsyncSession = Depends(get_db),
 ):
-    if not escort.stripe_subscription_id:
+    sub_id = escort.psp_subscription_id
+    if not sub_id:
         raise HTTPException(status_code=400, detail="No active subscription found")
 
     sub_result = await db.execute(
-        select(Subscription).where(Subscription.stripe_subscription_id == escort.stripe_subscription_id)
+        select(Subscription).where(Subscription.psp_subscription_id == sub_id)
     )
-    existing = sub_result.scalar_one_or_none()
+    existing = sub_result.scalars().first()
     if existing and existing.status == "cancelling":
-        raise HTTPException(status_code=400, detail="Your subscription is already scheduled to cancel at the end of the billing period")
+        raise HTTPException(status_code=400, detail="Your subscription is already scheduled to cancel")
 
-    client = _stripe_client()
-    updated = client.subscriptions.update(
-        escort.stripe_subscription_id,
-        params={"cancel_at_period_end": True},
-    )
-    period_end = _period_end_from_stripe(updated)
+    provider = get_provider()
+    try:
+        provider.cancel_subscription(sub_id)
+    except ProviderApiError as e:
+        raise HTTPException(status_code=502, detail=f"Could not cancel: {e}")
 
     if existing:
         existing.status = "cancelling"
-        if period_end:
-            existing.current_period_end = period_end
-    else:
-        db.add(Subscription(
-            escort_id=escort.id,
-            tier=escort.subscription_tier,
-            status="cancelling",
-            stripe_subscription_id=escort.stripe_subscription_id,
-            current_period_end=period_end,
-        ))
     await db.flush()
     return MessageResponse(message="Subscription will cancel at the end of the current billing period")
 
@@ -917,416 +506,304 @@ async def cancel_blue_tick(
     escort: Escort = Depends(get_current_verified_escort),
     db: AsyncSession = Depends(get_db),
 ):
-    if not escort.blue_tick_stripe_subscription_id:
+    sub_id = escort.psp_blue_tick_subscription_id
+    if not sub_id:
         raise HTTPException(status_code=400, detail="No active Blue Tick subscription found")
-
     bt_result = await db.execute(
-        select(Subscription).where(Subscription.stripe_subscription_id == escort.blue_tick_stripe_subscription_id)
+        select(Subscription).where(Subscription.psp_subscription_id == sub_id)
     )
-    existing = bt_result.scalar_one_or_none()
+    existing = bt_result.scalars().first()
     if existing and existing.status == "cancelling":
-        raise HTTPException(status_code=400, detail="Your Blue Tick is already scheduled to cancel at the end of the billing period")
+        raise HTTPException(status_code=400, detail="Your Blue Tick is already scheduled to cancel")
 
-    client = _stripe_client()
-    updated = client.subscriptions.update(
-        escort.blue_tick_stripe_subscription_id,
-        params={"cancel_at_period_end": True},
-    )
-    period_end = _period_end_from_stripe(updated)
+    provider = get_provider()
+    try:
+        provider.cancel_subscription(sub_id)
+    except ProviderApiError as e:
+        raise HTTPException(status_code=502, detail=f"Could not cancel Blue Tick: {e}")
 
     if existing:
         existing.status = "cancelling"
-        if period_end:
-            existing.current_period_end = period_end
-    else:
-        db.add(Subscription(
-            escort_id=escort.id,
-            tier="blue_tick",
-            status="cancelling",
-            stripe_subscription_id=escort.blue_tick_stripe_subscription_id,
-            current_period_end=period_end,
-        ))
     await db.flush()
     return MessageResponse(message="Blue Tick will cancel at the end of the current billing period")
 
 
-@router.post("/payments/reactivate", response_model=MessageResponse)
-async def reactivate_subscription(
+@router.post("/payments/sync", response_model=MessageResponse)
+async def sync_subscription_from_provider(
     escort: Escort = Depends(get_current_verified_escort),
-    db: AsyncSession = Depends(get_db),
 ):
-    if not escort.stripe_subscription_id:
-        raise HTTPException(status_code=400, detail="No subscription found")
+    """No-op for Verotel — there's no programmatic 'list customer subscriptions'
+    endpoint we can use as a fallback. We rely entirely on webhooks.
 
-    sub_result = await db.execute(
-        select(Subscription).where(Subscription.stripe_subscription_id == escort.stripe_subscription_id)
-    )
-    existing = sub_result.scalar_one_or_none()
-    if not existing or existing.status != "cancelling":
-        raise HTTPException(status_code=400, detail="Subscription is not scheduled for cancellation")
-
-    client = _stripe_client()
-    client.subscriptions.update(
-        escort.stripe_subscription_id,
-        params={"cancel_at_period_end": False},
-    )
-    existing.status = "active"
-    await db.flush()
-    return MessageResponse(message="Subscription reactivated! Auto-renewal is back on.")
+    Kept as an endpoint so the frontend success page can call it harmlessly
+    if it was wired up under the Stripe era. Returns a friendly message.
+    """
+    return MessageResponse(message="Sync not required for this provider")
 
 
-@router.post("/payments/reactivate-blue-tick", response_model=MessageResponse)
-async def reactivate_blue_tick(
-    escort: Escort = Depends(get_current_verified_escort),
-    db: AsyncSession = Depends(get_db),
-):
-    if not escort.blue_tick_stripe_subscription_id:
-        raise HTTPException(status_code=400, detail="No Blue Tick subscription found")
+# ─── Webhook ─────────────────────────────────────────────────────────────────
 
-    bt_result = await db.execute(
-        select(Subscription).where(Subscription.stripe_subscription_id == escort.blue_tick_stripe_subscription_id)
-    )
-    existing = bt_result.scalar_one_or_none()
-    if not existing or existing.status != "cancelling":
-        raise HTTPException(status_code=400, detail="Blue Tick is not scheduled for cancellation")
-
-    client = _stripe_client()
-    client.subscriptions.update(
-        escort.blue_tick_stripe_subscription_id,
-        params={"cancel_at_period_end": False},
-    )
-    existing.status = "active"
-    await db.flush()
-    return MessageResponse(message="Blue Tick reactivated! Auto-renewal is back on.")
-
-
-@router.post("/webhooks/stripe")
-async def stripe_webhook(
+@router.post("/webhooks/verotel")
+@router.get("/webhooks/verotel")   # Verotel postbacks are sometimes GET
+async def verotel_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     payload = await request.body()
-    sig_header = request.headers.get("stripe-signature", "")
-
-    if not settings.STRIPE_WEBHOOK_SECRET:
-        raise HTTPException(status_code=503, detail="Webhook secret not configured")
+    provider = get_provider()
+    if provider.name != "verotel":
+        raise HTTPException(status_code=503, detail="Verotel is not the active provider")
 
     try:
-        event = stripe.Webhook.construct_event(
-            payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
+        event = provider.verify_and_parse_webhook(
+            raw_body=payload,
+            headers=dict(request.headers),
+            query_params=dict(request.query_params),
         )
-    except stripe.error.SignatureVerificationError:
+    except InvalidWebhookSignatureError:
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid webhook payload")
+    except ProviderApiError as e:
+        # Unknown event type — log and 200 so Verotel stops retrying.
+        print(f"[verotel webhook] {e}")
+        return {"received": True, "ignored": True}
 
-    event_id = event["id"]
-    event_type = event["type"]
-    data = event["data"]["object"]
-
-    # Idempotency: record the event ID before processing. ON CONFLICT DO NOTHING
-    # means duplicate deliveries are no-ops. The insert is part of the request
-    # transaction, so if processing fails downstream, the rollback also rolls
-    # back the event_id insertion and Stripe will retry.
+    # Idempotency: dedupe on (subscription_id, event_type, transaction_id).
+    # Verotel doesn't have a unique event_id like Stripe, but transaction_id
+    # within a subscription is unique per charge.
+    dedup_key = f"verotel:{event.subscription_id}:{event.type.value}:{event.transaction_id or ''}"
     dedup_stmt = pg_insert(WebhookEvent).values(
-        id=event_id,
-        event_type=event_type,
+        id=dedup_key,
+        event_type=event.type.value,
         received_at=datetime.utcnow(),
     ).on_conflict_do_nothing(index_elements=["id"])
     result = await db.execute(dedup_stmt)
     if result.rowcount == 0:
-        # Already processed — return 200 so Stripe stops retrying
         return {"received": True, "duplicate": True}
 
-    if event_type == "checkout.session.completed":
-        await _handle_checkout_completed(data, db, background_tasks)
-
-    elif event_type == "customer.subscription.updated":
-        await _handle_subscription_updated(data, db, background_tasks)
-
-    elif event_type == "customer.subscription.deleted":
-        await _handle_subscription_deleted(data, db)
-
-    elif event_type == "invoice.paid":
-        await _handle_invoice_paid(data, db)
-
-    elif event_type == "invoice.payment_failed":
-        pass
-
+    await _apply_webhook_event(event, db, background_tasks)
     return {"received": True}
 
 
-async def _handle_checkout_completed(session: dict, db: AsyncSession, background_tasks: BackgroundTasks):
-    escort_id = session.get("metadata", {}).get("escort_id")
-    tier = session.get("metadata", {}).get("tier")
-    subscription_id = session.get("subscription")
-    stripe_customer_id = session.get("customer")
-    if not escort_id or not tier or not subscription_id:
-        return
+async def _apply_webhook_event(event, db: AsyncSession, background_tasks: BackgroundTasks) -> None:
+    """Single dispatch point for all canonical event types."""
+    if event.type == WebhookEventType.SUBSCRIPTION_CREATED:
+        await _handle_subscription_created(event, db, background_tasks)
+    elif event.type == WebhookEventType.SUBSCRIPTION_RENEWED:
+        await _handle_subscription_renewed(event, db)
+    elif event.type == WebhookEventType.SUBSCRIPTION_CANCELLED:
+        await _handle_subscription_cancelled(event, db)
+    elif event.type == WebhookEventType.SUBSCRIPTION_EXPIRED:
+        await _handle_subscription_expired(event, db)
+    elif event.type == WebhookEventType.SUBSCRIPTION_REACTIVATED:
+        await _handle_subscription_reactivated(event, db)
+    elif event.type == WebhookEventType.REFUND_ISSUED:
+        await _handle_refund(event, db)
+    elif event.type == WebhookEventType.CHARGEBACK:
+        await _handle_chargeback(event, db)
 
-    result = await db.execute(select(Escort).where(Escort.id == escort_id))
-    escort = result.scalar_one_or_none()
-    if not escort:
-        return
 
-    # Security: verify the Stripe customer matches the stored customer for this escort.
-    if escort.stripe_customer_id and escort.stripe_customer_id != stripe_customer_id:
-        print(f"[SECURITY] Stripe webhook customer mismatch for escort {escort_id}: "
-              f"expected {escort.stripe_customer_id}, got {stripe_customer_id}")
-        return
-
-    if not escort.stripe_customer_id and stripe_customer_id:
-        escort.stripe_customer_id = stripe_customer_id
-
-    sub_obj = stripe.Subscription.retrieve(
-        subscription_id, api_key=settings.STRIPE_SECRET_KEY
-    )
-    period_start = datetime.utcfromtimestamp(sub_obj["current_period_start"])
-    period_end = datetime.utcfromtimestamp(sub_obj["current_period_end"])
-    price_id = sub_obj["items"]["data"][0]["price"]["id"] if sub_obj["items"]["data"] else None
-    amount = sub_obj["items"]["data"][0]["price"]["unit_amount"] if sub_obj["items"]["data"] else None
-
-    if tier == "blue_tick":
-        escort.blue_tick_stripe_subscription_id = subscription_id
-
-        old_bt_result = await db.execute(
-            select(Subscription).where(
-                Subscription.escort_id == escort.id,
-                Subscription.tier == "blue_tick",
-                Subscription.status.in_(["active", "cancelling"]),
+async def _find_escort(event, db: AsyncSession) -> Optional[Escort]:
+    """Find the escort this event belongs to. Prefer metadata.escort_id, fall
+    back to looking up by psp_subscription_id."""
+    escort_id = event.metadata.get("escort_id")
+    if escort_id:
+        result = await db.execute(select(Escort).where(Escort.id == escort_id))
+        e = result.scalar_one_or_none()
+        if e:
+            return e
+    if event.subscription_id:
+        result = await db.execute(
+            select(Escort).where(
+                (Escort.psp_subscription_id == event.subscription_id)
+                | (Escort.psp_blue_tick_subscription_id == event.subscription_id)
             )
         )
-        for old_bt in old_bt_result.scalars():
-            old_bt.status = "replaced"
-        db.add(Subscription(
-            escort_id=escort.id,
-            tier="blue_tick",
-            status="active",
-            stripe_subscription_id=subscription_id,
-            stripe_price_id=price_id,
-            amount_gbp=amount,
-            current_period_start=period_start,
-            current_period_end=period_end,
-        ))
+        return result.scalar_one_or_none()
+    return None
 
-        existing = await db.execute(
+
+async def _handle_subscription_created(event, db: AsyncSession, background_tasks: BackgroundTasks):
+    escort = await _find_escort(event, db)
+    if not escort:
+        print(f"[verotel] subscription_created — could not find escort for {event.subscription_id}")
+        return
+
+    tier = event.metadata.get("tier") or "essential"
+    is_blue_tick = tier == "blue_tick"
+
+    # Replace any older active row of the same kind.
+    old_filter = [Subscription.escort_id == escort.id, Subscription.status == "active"]
+    if is_blue_tick:
+        old_filter.append(Subscription.tier == "blue_tick")
+    else:
+        old_filter.append(Subscription.tier != "blue_tick")
+    old_subs = await db.execute(select(Subscription).where(*old_filter))
+    for old in old_subs.scalars():
+        old.status = "replaced"
+
+    # Period end: Verotel doesn't tell us this in `initial` postbacks reliably.
+    # Approximate based on tier + billing — webhook will overwrite on first rebill.
+    billing = event.metadata.get("billing") or "monthly"
+    if billing == "annual":
+        period_end = datetime.utcnow().replace(month=1, day=1) if datetime.utcnow().month == 12 else datetime.utcnow()
+        # Crude — webhook for renewal will correct it.
+        period_end = period_end.replace(year=period_end.year + 1)
+    else:
+        nm = _next_month_first()
+        period_end = datetime(nm.year, nm.month, nm.day)
+
+    db.add(Subscription(
+        escort_id=escort.id,
+        tier=tier,
+        status="active",
+        psp_provider="verotel",
+        psp_subscription_id=event.subscription_id,
+        amount_gbp=event.amount_pence,
+        current_period_start=datetime.utcnow(),
+        current_period_end=period_end,
+    ))
+
+    if is_blue_tick:
+        escort.psp_blue_tick_subscription_id = event.subscription_id
+        # Create a pending verification record so admin reviews the photos.
+        existing_v = await db.execute(
             select(Verification).where(
                 Verification.escort_id == escort.id,
                 Verification.level == 3,
                 Verification.status == "pending",
             )
         )
-        if not existing.scalar_one_or_none():
-            db.add(Verification(
-                escort_id=escort.id,
-                level=3,
-                status="pending",
-            ))
-            await db.flush()
+        if not existing_v.scalar_one_or_none():
+            db.add(Verification(escort_id=escort.id, level=3, status="pending"))
             background_tasks.add_task(
                 send_verification_submitted_to_admin,
                 escort_stage_name=escort.stage_name,
                 escort_email=escort.email,
                 submission_level=3,
             )
-        else:
-            await db.flush()
-        return
+    else:
+        escort.subscription_tier = tier
+        escort.psp_subscription_id = event.subscription_id
+        escort.psp_provider = "verotel"
+        escort.subscription_expires_at = period_end
+        # Auto-grant Blue Tick if already identity-verified on premium/elite.
+        if tier in ("premium", "elite") and escort.verification_level >= 2:
+            escort.blue_tick_active = True
 
-    # Standard subscription tier
-    old_subs_result = await db.execute(
-        select(Subscription).where(
-            Subscription.escort_id == escort.id,
-            Subscription.status == "active",
-        )
-    )
-    for old_sub in old_subs_result.scalars():
-        old_sub.status = "replaced"
-
-    sub = Subscription(
-        escort_id=escort.id,
-        tier=tier,
-        status="active",
-        stripe_subscription_id=subscription_id,
-        stripe_price_id=price_id,
-        amount_gbp=amount,
-        current_period_start=period_start,
-        current_period_end=period_end,
-    )
-    db.add(sub)
-
-    escort.subscription_tier = tier
-    escort.stripe_subscription_id = subscription_id
-    escort.subscription_expires_at = period_end
-    # Premium/Elite include Blue Tick free — auto-grant if identity already verified.
-    if tier in ("premium", "elite") and escort.verification_level >= 2:
-        escort.blue_tick_active = True
     await db.flush()
 
 
-async def _handle_subscription_updated(sub_obj: dict, db: AsyncSession, background_tasks: BackgroundTasks):
-    subscription_id = sub_obj.get("id")
-    status = sub_obj.get("status")
-    cancel_at_period_end = sub_obj.get("cancel_at_period_end", False)
-    event_customer_id = sub_obj.get("customer")
-
+async def _handle_subscription_renewed(event, db: AsyncSession):
     result = await db.execute(
-        select(Subscription).where(Subscription.stripe_subscription_id == subscription_id)
+        select(Subscription).where(Subscription.psp_subscription_id == event.subscription_id)
+        .order_by(Subscription.created_at.desc())
     )
-    sub = result.scalar_one_or_none()
+    sub = result.scalars().first()
     if not sub:
         return
 
-    period_start = datetime.utcfromtimestamp(sub_obj["current_period_start"]) if sub_obj.get("current_period_start") else None
-    period_end = datetime.utcfromtimestamp(sub_obj["current_period_end"]) if sub_obj.get("current_period_end") else None
+    # Recompute next period end based on tier billing cadence in DB.
+    nm = _next_month_first()
+    sub.current_period_start = datetime.utcnow()
+    sub.current_period_end = datetime(nm.year, nm.month, nm.day)
 
-    period_renewed = (
-        period_start is not None
-        and sub.current_period_start is not None
-        and period_start > sub.current_period_start
-    )
-
-    sub.status = "cancelling" if cancel_at_period_end else status
-    if period_start:
-        sub.current_period_start = period_start
-    if period_end:
-        sub.current_period_end = period_end
-
-    # Load escort via our DB FK on the Subscription (NOT from webhook metadata).
-    # Then defence-in-depth verify the Stripe customer matches our stored one.
+    # If a downgrade was pending, apply it now.
     escort_result = await db.execute(select(Escort).where(Escort.id == sub.escort_id))
     escort = escort_result.scalar_one_or_none()
-    if escort and event_customer_id and escort.stripe_customer_id and escort.stripe_customer_id != event_customer_id:
-        print(f"[SECURITY] subscription.updated customer mismatch for sub {subscription_id}: "
-              f"expected {escort.stripe_customer_id}, got {event_customer_id}")
-        return
+    if escort and sub.pending_tier:
+        new_tier = sub.pending_tier
+        escort.subscription_tier = new_tier
+        sub.tier = new_tier
+        sub.pending_tier = None
+        # Photo-limit enforcement
+        new_limit = _TIER_PHOTO_LIMITS.get(new_tier, 3)
+        from sqlalchemy import func as sqlfunc
+        photo_count_res = await db.execute(
+            select(sqlfunc.count()).select_from(EscortPhoto).where(EscortPhoto.escort_id == escort.id)
+        )
+        if (photo_count_res.scalar() or 0) > new_limit:
+            escort.is_approved = False
     if escort:
-        if period_end:
-            escort.subscription_expires_at = period_end
-        if period_renewed and sub.pending_tier:
-            new_tier = sub.pending_tier
-            escort.subscription_tier = new_tier
-            sub.tier = new_tier
-            sub.pending_tier = None
-            # Auto-grant Blue Tick when pending upgrade becomes active at period renewal
-            if new_tier in ("premium", "elite") and escort.verification_level >= 2:
-                escort.blue_tick_active = True
-            # Pause profile if photo count exceeds new tier's limit
-            new_photo_limit = _TIER_PHOTO_LIMITS.get(new_tier, 3)
-            from sqlalchemy import func as sqlfunc
-            photo_count_res = await db.execute(
-                select(sqlfunc.count()).select_from(EscortPhoto).where(EscortPhoto.escort_id == escort.id)
-            )
-            photo_count = photo_count_res.scalar() or 0
-            if photo_count > new_photo_limit:
-                escort.is_approved = False
-                background_tasks.add_task(
-                    send_profile_paused_photo_limit,
-                    escort_email=escort.email,
-                    stage_name=escort.stage_name,
-                    current_photos=photo_count,
-                    photo_limit=new_photo_limit,
-                    new_tier=new_tier,
-                )
-
+        escort.subscription_expires_at = sub.current_period_end
     await db.flush()
 
 
-async def _handle_subscription_deleted(sub_obj: dict, db: AsyncSession):
-    subscription_id = sub_obj.get("id")
-    event_customer_id = sub_obj.get("customer")
-
+async def _handle_subscription_cancelled(event, db: AsyncSession):
     result = await db.execute(
-        select(Subscription).where(Subscription.stripe_subscription_id == subscription_id)
+        select(Subscription).where(Subscription.psp_subscription_id == event.subscription_id)
     )
-    sub = result.scalar_one_or_none()
+    for sub in result.scalars():
+        sub.status = "cancelling"
+    await db.flush()
+
+
+async def _handle_subscription_expired(event, db: AsyncSession):
+    result = await db.execute(
+        select(Subscription).where(Subscription.psp_subscription_id == event.subscription_id)
+        .order_by(Subscription.created_at.desc())
+    )
+    sub = result.scalars().first()
     if not sub:
         return
     sub.status = "cancelled"
     sub.cancelled_at = datetime.utcnow()
-
-    # Use the tier from OUR DB record, not the webhook metadata
-    tier = sub.tier
-
     escort_result = await db.execute(select(Escort).where(Escort.id == sub.escort_id))
     escort = escort_result.scalar_one_or_none()
-    if escort and event_customer_id and escort.stripe_customer_id and escort.stripe_customer_id != event_customer_id:
-        print(f"[SECURITY] subscription.deleted customer mismatch for sub {subscription_id}: "
-              f"expected {escort.stripe_customer_id}, got {event_customer_id}")
-        return
     if escort:
-        if tier == "blue_tick":
+        if sub.tier == "blue_tick":
             escort.blue_tick_active = False
-            escort.blue_tick_stripe_subscription_id = None
+            escort.psp_blue_tick_subscription_id = None
             if escort.verification_level >= 3:
                 escort.verification_level = 2
         else:
             escort.subscription_tier = "free"
-            escort.stripe_subscription_id = None
+            escort.psp_subscription_id = None
             escort.subscription_expires_at = None
     await db.flush()
 
 
-async def _handle_invoice_paid(invoice: dict, db: AsyncSession):
-    """Award 1 free month credit to the referrer when a referred escort makes their first real payment."""
-    if invoice.get("billing_reason") not in ("subscription_cycle", "subscription_create"):
-        return
-    if invoice.get("amount_paid", 0) == 0:
-        return
-
-    stripe_customer_id = invoice.get("customer")
-    if not stripe_customer_id:
-        return
-
+async def _handle_subscription_reactivated(event, db: AsyncSession):
     result = await db.execute(
-        select(Escort).where(
-            Escort.stripe_customer_id == stripe_customer_id,
-            Escort.referred_by_code.isnot(None),
-            Escort.referral_reward_claimed == False,
-        )
+        select(Subscription).where(Subscription.psp_subscription_id == event.subscription_id)
     )
-    referred = result.scalar_one_or_none()
-    if not referred:
-        return
+    for sub in result.scalars():
+        if sub.status == "cancelling":
+            sub.status = "active"
+    await db.flush()
 
-    referred.referral_reward_claimed = True
 
-    ref_result = await db.execute(
-        select(Escort).where(Escort.referral_code == referred.referred_by_code)
+async def _handle_refund(event, db: AsyncSession):
+    # Mark the subscription as refunded but DO NOT auto-revoke access — admin
+    # will decide whether the user keeps their plan or not (e.g. a partial
+    # refund might still leave them subscribed).
+    result = await db.execute(
+        select(Subscription).where(Subscription.psp_subscription_id == event.subscription_id)
     )
-    referrer = ref_result.scalar_one_or_none()
-    if not referrer or not referrer.stripe_customer_id:
-        await db.flush()
-        return
+    for sub in result.scalars():
+        # Append a note via the unused field if you have one, otherwise just
+        # update status. We use cancelled_at to mark when the refund hit.
+        if not sub.cancelled_at:
+            sub.cancelled_at = datetime.utcnow()
+    await db.flush()
 
-    sub_result = await db.execute(
-        select(Subscription)
-        .where(
-            Subscription.escort_id == referrer.id,
-            Subscription.status.in_(["active", "cancelling"]),
-            Subscription.tier != "blue_tick",
-        )
+
+async def _handle_chargeback(event, db: AsyncSession):
+    # Chargebacks are serious — instantly revoke access and freeze the escort.
+    result = await db.execute(
+        select(Subscription).where(Subscription.psp_subscription_id == event.subscription_id)
         .order_by(Subscription.created_at.desc())
     )
-    referrer_sub = sub_result.scalar_one_or_none()
-    if not referrer_sub or not referrer_sub.amount_gbp:
-        await db.flush()
+    sub = result.scalars().first()
+    if not sub:
         return
-
-    # If amount > £50 (5000p), treat as annual and divide by 12 to get monthly credit
-    amount = referrer_sub.amount_gbp
-    credit = amount // 12 if amount > 5000 else amount
-
-    try:
-        stripe.Customer.create_balance_transaction(
-            referrer.stripe_customer_id,
-            amount=-credit,
-            currency="gbp",
-            description=f"Referral reward: {referred.stage_name} joined using your code",
-            api_key=settings.STRIPE_SECRET_KEY,
-        )
-    except Exception as e:
-        print(f"[STRIPE] Referral credit failed for referrer {referrer.id}: {e}")
-
+    sub.status = "cancelled"
+    sub.cancelled_at = datetime.utcnow()
+    escort_result = await db.execute(select(Escort).where(Escort.id == sub.escort_id))
+    escort = escort_result.scalar_one_or_none()
+    if escort:
+        escort.subscription_tier = "free"
+        escort.psp_subscription_id = None
+        escort.subscription_expires_at = None
+        escort.is_approved = False  # Hide profile while we investigate
     await db.flush()

@@ -473,15 +473,11 @@ export function SubscriptionPage() {
         )
         window.location.href = url
       } else {
-        // Existing subscriber — upgrade/downgrade in-place
-        const { message } = await paymentsApi.upgradeTier(tier, billing)
-        toast.success(message)
-        qc.invalidateQueries({ queryKey: ['my-profile'] })
-        qc.invalidateQueries({ queryKey: ['subscription'] })
-        setPendingChange(null)
-        if (tier === 'premium' || tier === 'elite') {
-          navigate('/dashboard/profile')
-        }
+        // Existing subscriber switching tier — Verotel can't change price
+        // mid-cycle, so the backend cancels the old sub and returns a fresh
+        // checkout URL for the new tier.
+        const { url } = await paymentsApi.upgradeTier(tier, billing)
+        window.location.href = url
       }
     } catch (err: any) {
       toast.error(err?.response?.data?.detail ?? 'Could not process. Please try again.')

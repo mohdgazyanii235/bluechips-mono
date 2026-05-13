@@ -22,18 +22,19 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
-    # Stripe
-    STRIPE_SECRET_KEY: str = ""
-    STRIPE_PUBLISHABLE_KEY: str = ""
-    STRIPE_WEBHOOK_SECRET: str = ""
-    STRIPE_ESSENTIAL_PRICE_ID: str = ""           # £24.99/month
-    STRIPE_PREMIUM_PRICE_ID: str = ""             # £49.99/month
-    STRIPE_ELITE_PRICE_ID: str = ""               # £89.99/month
-    STRIPE_ESSENTIAL_ANNUAL_PRICE_ID: str = ""    # £249.90/year (2 months free)
-    STRIPE_PREMIUM_ANNUAL_PRICE_ID: str = ""      # £499.90/year (2 months free)
-    STRIPE_ELITE_ANNUAL_PRICE_ID: str = ""        # £899.90/year (2 months free)
-    STRIPE_BLUE_TICK_SETUP_PRICE_ID: str = ""     # one-time £10
-    STRIPE_BLUE_TICK_MONTHLY_PRICE_ID: str = ""   # recurring £3.99/month
+    # Payment provider
+    PAYMENT_PROVIDER: str = "verotel"   # "verotel" — only active provider
+
+    # Verotel FlexPay
+    VEROTEL_SHOP_ID: str = ""
+    VEROTEL_SIGNATURE_KEY: str = ""
+    VEROTEL_API_USERNAME: str = ""
+    VEROTEL_API_PASSWORD: str = ""
+    VEROTEL_TEST_MODE: bool = True
+    VEROTEL_WEBHOOK_PATH: str = "/api/webhooks/verotel"   # the route the postback hits
+
+    # Legacy Stripe envs kept blank — provider has been removed.
+    # If you ever need to read historic data, query the DB directly.
 
     # Email
     EMAIL_FROM: str = "noreply@bluechips.live"
@@ -74,8 +75,8 @@ class Settings(BaseSettings):
         return self.S3_PUBLIC_URL or self.CLOUDFRONT_URL or ""
 
     @property
-    def use_stripe(self) -> bool:
-        return bool(self.STRIPE_SECRET_KEY)
+    def use_verotel(self) -> bool:
+        return self.PAYMENT_PROVIDER.lower() == "verotel" and bool(self.VEROTEL_SHOP_ID)
 
     class Config:
         env_file = ".env"

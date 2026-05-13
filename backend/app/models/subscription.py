@@ -16,6 +16,13 @@ class Subscription(Base):
     tier: Mapped[str] = mapped_column(String(20), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="active")  # active, cancelled, expired, trialing
 
+    # Provider-agnostic identifiers (preferred for all new rows).
+    psp_provider: Mapped[Optional[str]] = mapped_column(String(20))   # "verotel"
+    psp_subscription_id: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    psp_checkout_reference: Mapped[Optional[str]] = mapped_column(String(100))
+
+    # Legacy Stripe columns retained for historic rows only. Do NOT write to
+    # these for new subscriptions — use psp_* instead.
     stripe_subscription_id: Mapped[Optional[str]] = mapped_column(String(100))
     stripe_price_id: Mapped[Optional[str]] = mapped_column(String(100))
 

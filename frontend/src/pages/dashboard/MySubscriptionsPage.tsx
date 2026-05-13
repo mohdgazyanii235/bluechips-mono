@@ -287,23 +287,19 @@ export function MySubscriptionsPage() {
   }
 
   const handleReactivateMain = async () => {
-    try {
-      await paymentsApi.reactivateSubscription()
-      toast.success('Subscription reactivated! Auto-renewal is back on.')
-      invalidateAll()
-    } catch {
-      toast.error('Could not reactivate. Please try again.')
-    }
+    // Verotel does not support programmatic reactivation. The user has to
+    // start a fresh subscription via checkout.
+    toast(
+      'To reactivate, please start a new subscription from the Subscription page.',
+      { duration: 6000 },
+    )
   }
 
   const handleReactivateBlueTick = async () => {
-    try {
-      await paymentsApi.reactivateBlueTick()
-      toast.success('Blue Tick reactivated! Auto-renewal is back on.')
-      invalidateAll()
-    } catch {
-      toast.error('Could not reactivate. Please try again.')
-    }
+    toast(
+      'To reactivate Blue Tick, please apply for it again from the Verification page.',
+      { duration: 6000 },
+    )
   }
 
   const invoices: any[] = invoiceData?.invoices ?? []

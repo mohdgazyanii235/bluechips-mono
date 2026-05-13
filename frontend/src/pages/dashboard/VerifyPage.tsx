@@ -238,7 +238,7 @@ export function VerifyPage() {
   useEffect(() => {
     if (paymentSuccess || blueTickStatus === 'success') {
       setSyncing(true)
-      paymentsApi.syncFromStripe()
+      paymentsApi.syncFromProvider()
         .then(() => refresh())
         .catch(() => {})
         .finally(() => setSyncing(false))

@@ -103,6 +103,11 @@ class Escort(Base):
     # Subscription
     subscription_tier: Mapped[str] = mapped_column(String(20), default="free")
     subscription_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    # Provider-agnostic IDs (use these for all new code).
+    psp_provider: Mapped[Optional[str]] = mapped_column(String(20))
+    psp_subscription_id: Mapped[Optional[str]] = mapped_column(String(100))
+    psp_blue_tick_subscription_id: Mapped[Optional[str]] = mapped_column(String(100))
+    # Legacy Stripe columns retained for historic rows only.
     stripe_customer_id: Mapped[Optional[str]] = mapped_column(String(100))
     stripe_subscription_id: Mapped[Optional[str]] = mapped_column(String(100))
 
